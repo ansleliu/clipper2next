@@ -1,0 +1,11 @@
+license_id,name,notes,redistribution_review
+Natural-Earth,Natural Earth public domain,Verify current Natural Earth attribution text before publishing,required
+ODbL,Open Database License,Keep OSM/Geofabrik attribution and derived database notes,required
+US-Public-Domain,US public domain,Confirm TIGER/Line citation text,required
+LGPL-2.1-or-later,LGPL 2.1 or later,GEOS source tests require license preservation,required
+EPL-2.0-or-EDL-1.0,Eclipse Public License 2.0 or Eclipse Distribution License 1.0,JTS README states dual licensing under EPL 2.0 or EDL 1.0,required
+BSL-1.0,Boost Software License 1.0,Clipper2 and clipper2-rust source trees include Boost Software License text,required
+MIT,MIT License,mfogel polygon-clipping source tree includes MIT license,required
+Esri-Data-Review,Esri data/vendor constraints,Esri sample metadata carries use constraints; keep source metadata with the sample,required
+Publication-Review,Publication rights review,Foster 2019 PDF is retained as external test data and needs redistribution review,required
+Martinez-Rueda-Review,Martinez/Rueda curated fixture provenance review,Curated Martinez/Rueda fixture requires provenance and redistribution review before publishing,required

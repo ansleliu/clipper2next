@@ -1,0 +1,4 @@
+sources:
+  "@VERSION@":
+    url: "@ARCHIVE_URL@"
+    sha256: "@ARCHIVE_SHA256@"

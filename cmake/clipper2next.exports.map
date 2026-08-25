@@ -1,0 +1,7 @@
+{
+  global:
+    _ZN12clipper2next*;
+    _ZNK12clipper2next*;
+  local:
+    *;
+};

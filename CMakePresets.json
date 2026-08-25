@@ -1,0 +1,295 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "msvc-product",
+      "displayName": "clipper2next standalone MSVC product",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/msvc-product",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests;benchmarks",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CLIPPER2NEXT_TESTS": "ON",
+        "CLIPPER2NEXT_BENCHMARKS": "ON",
+        "CLIPPER2NEXT_FETCH_DEPS": "OFF",
+        "CLIPPER2NEXT_BUILD_ORACLE": "OFF",
+        "CLIPPER2NEXT_WARNINGS_AS_ERRORS": "ON",
+        "CLIPPER2NEXT_CXX_STANDARD": "23"
+      }
+    },
+    {
+      "name": "msvc-oracle",
+      "displayName": "clipper2next standalone MSVC oracle",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/msvc-oracle",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests;oracle",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CLIPPER2NEXT_TESTS": "ON",
+        "CLIPPER2NEXT_BENCHMARKS": "OFF",
+        "CLIPPER2NEXT_FETCH_DEPS": "OFF",
+        "CLIPPER2NEXT_BUILD_ORACLE": "ON",
+        "CLIPPER2NEXT_WARNINGS_AS_ERRORS": "ON",
+        "CLIPPER2NEXT_CXX_STANDARD": "23"
+      }
+    },
+    {
+      "name": "msvc-oracle-benchmarks",
+      "displayName": "clipper2next standalone MSVC oracle benchmarks",
+      "inherits": "msvc-oracle",
+      "binaryDir": "${sourceDir}/build/msvc-oracle-benchmarks",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests;benchmarks;oracle",
+        "CLIPPER2NEXT_BENCHMARKS": "ON"
+      }
+    },
+    {
+      "name": "msvc-qml-demo",
+      "displayName": "clipper2next standalone MSVC Qt Quick demo",
+      "inherits": "msvc-product",
+      "binaryDir": "${sourceDir}/build/msvc-qml-demo",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests;benchmarks;qml-demo",
+        "CLIPPER2NEXT_DEMOS": "ON",
+        "CLIPPER2NEXT_QML_DEMO": "ON"
+      }
+    },
+    {
+      "name": "linux-gcc-oracle",
+      "displayName": "clipper2next standalone Linux GCC oracle",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-gcc-oracle",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests;oracle",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc-13",
+        "CMAKE_CXX_COMPILER": "g++-13",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/oracle/vcpkg-triplets",
+        "CLIPPER2NEXT_TESTS": "ON",
+        "CLIPPER2NEXT_BENCHMARKS": "OFF",
+        "CLIPPER2NEXT_FETCH_DEPS": "OFF",
+        "CLIPPER2NEXT_BUILD_ORACLE": "ON",
+        "CLIPPER2NEXT_CXX_STANDARD": "23"
+      }
+    },
+    {
+      "name": "linux-gcc-oracle-benchmarks",
+      "displayName": "clipper2next standalone Linux GCC oracle benchmarks",
+      "inherits": "linux-gcc-oracle",
+      "binaryDir": "${sourceDir}/build/linux-gcc-oracle-benchmarks",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests;benchmarks;oracle",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CLIPPER2NEXT_BENCHMARKS": "ON"
+      }
+    },
+    {
+      "name": "linux-gcc-compact",
+      "displayName": "clipper2next Linux GCC with experimental cleanup compaction",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-gcc-compact",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc-13",
+        "CMAKE_CXX_COMPILER": "g++-13",
+        "CLIPPER2NEXT_TESTS": "ON",
+        "CLIPPER2NEXT_BENCHMARKS": "OFF",
+        "CLIPPER2NEXT_FETCH_DEPS": "OFF",
+        "CLIPPER2NEXT_BUILD_ORACLE": "OFF",
+        "CLIPPER2NEXT_ENABLE_CLEANUP_LOCAL_COMPACT": "ON",
+        "CLIPPER2NEXT_WARNINGS_AS_ERRORS": "ON",
+        "CLIPPER2NEXT_CXX_STANDARD": "23"
+      }
+    },
+    {
+      "name": "linux-gcc-asan-ubsan",
+      "displayName": "clipper2next Linux GCC AddressSanitizer UndefinedBehaviorSanitizer",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-gcc-asan-ubsan",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc-13",
+        "CMAKE_CXX_COMPILER": "g++-13",
+        "CLIPPER2NEXT_TESTS": "ON",
+        "CLIPPER2NEXT_BENCHMARKS": "OFF",
+        "CLIPPER2NEXT_FETCH_DEPS": "OFF",
+        "CLIPPER2NEXT_BUILD_ORACLE": "OFF",
+        "CLIPPER2NEXT_ENABLE_ASAN": "ON",
+        "CLIPPER2NEXT_ENABLE_UBSAN": "ON",
+        "CLIPPER2NEXT_WARNINGS_AS_ERRORS": "ON",
+        "CLIPPER2NEXT_CXX_STANDARD": "23"
+      }
+    },
+    {
+      "name": "linux-gcc-fuzz-smoke",
+      "displayName": "clipper2next Linux GCC ASan fuzz smoke tests",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-gcc-fuzz-smoke",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc-13",
+        "CMAKE_CXX_COMPILER": "g++-13",
+        "CLIPPER2NEXT_TESTS": "ON",
+        "CLIPPER2NEXT_BENCHMARKS": "OFF",
+        "CLIPPER2NEXT_FETCH_DEPS": "OFF",
+        "CLIPPER2NEXT_BUILD_ORACLE": "OFF",
+        "CLIPPER2NEXT_ENABLE_ASAN": "ON",
+        "CLIPPER2NEXT_WARNINGS_AS_ERRORS": "ON",
+        "CLIPPER2NEXT_CXX_STANDARD": "23"
+      }
+    },
+    {
+      "name": "linux-clang-fuzz",
+      "displayName": "clipper2next Linux Clang libFuzzer",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-clang-fuzz",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CLIPPER2NEXT_TESTS": "ON",
+        "CLIPPER2NEXT_BENCHMARKS": "OFF",
+        "CLIPPER2NEXT_FETCH_DEPS": "OFF",
+        "CLIPPER2NEXT_BUILD_ORACLE": "OFF",
+        "CLIPPER2NEXT_BUILD_FUZZERS": "ON",
+        "CLIPPER2NEXT_ENABLE_ASAN": "ON",
+        "CLIPPER2NEXT_WARNINGS_AS_ERRORS": "ON",
+        "CLIPPER2NEXT_CXX_STANDARD": "23"
+      }
+    },
+    {
+      "name": "linux-gcc-tsan",
+      "displayName": "clipper2next Linux GCC ThreadSanitizer",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-gcc-tsan",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "VCPKG_MANIFEST_FEATURES": "tests",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc-13",
+        "CMAKE_CXX_COMPILER": "g++-13",
+        "CLIPPER2NEXT_TESTS": "ON",
+        "CLIPPER2NEXT_BENCHMARKS": "OFF",
+        "CLIPPER2NEXT_FETCH_DEPS": "OFF",
+        "CLIPPER2NEXT_BUILD_ORACLE": "OFF",
+        "CLIPPER2NEXT_ENABLE_TSAN": "ON",
+        "CLIPPER2NEXT_WARNINGS_AS_ERRORS": "ON",
+        "CLIPPER2NEXT_CXX_STANDARD": "23"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "msvc-product",
+      "configurePreset": "msvc-product"
+    },
+    {
+      "name": "msvc-oracle",
+      "configurePreset": "msvc-oracle",
+      "targets": [
+        "clipper2next_tests",
+        "clipper2next_oracle_tests"
+      ]
+    },
+    {
+      "name": "msvc-oracle-benchmarks",
+      "configurePreset": "msvc-oracle-benchmarks"
+    },
+    {
+      "name": "msvc-qml-demo",
+      "configurePreset": "msvc-qml-demo"
+    },
+    {
+      "name": "linux-gcc-oracle",
+      "configurePreset": "linux-gcc-oracle"
+    },
+    {
+      "name": "linux-gcc-oracle-benchmarks",
+      "configurePreset": "linux-gcc-oracle-benchmarks",
+      "targets": [
+        "clipper2next_oracle_benchmarks"
+      ]
+    },
+    {
+      "name": "linux-gcc-compact",
+      "configurePreset": "linux-gcc-compact"
+    },
+    {
+      "name": "linux-gcc-asan-ubsan",
+      "configurePreset": "linux-gcc-asan-ubsan"
+    },
+    {
+      "name": "linux-gcc-fuzz-smoke",
+      "configurePreset": "linux-gcc-fuzz-smoke",
+      "targets": [
+        "clipper2next_tests"
+      ]
+    },
+    {
+      "name": "linux-clang-fuzz",
+      "configurePreset": "linux-clang-fuzz",
+      "targets": [
+        "clipper2next_clip_fuzzer"
+      ]
+    },
+    {
+      "name": "linux-gcc-tsan",
+      "configurePreset": "linux-gcc-tsan"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "msvc-product",
+      "configurePreset": "msvc-product",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "msvc-oracle",
+      "configurePreset": "msvc-oracle",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-gcc-oracle",
+      "configurePreset": "linux-gcc-oracle",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-gcc-compact",
+      "configurePreset": "linux-gcc-compact",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-gcc-asan-ubsan",
+      "configurePreset": "linux-gcc-asan-ubsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-gcc-tsan",
+      "configurePreset": "linux-gcc-tsan",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,899 @@
+{
+  "schema_version": 1,
+  "equivalence": {
+    "coordinate_tolerance": 0,
+    "normalize_closed_ring_start": true,
+    "normalize_independent_path_order": true,
+    "normalize_winding": false,
+    "normalize_open_path_direction": false
+  },
+  "profiles": [
+    {
+      "id": "overlay",
+      "eligibility_file": "overlay-candidates.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "operation.intersection": {
+          "min_count": 48
+        },
+        "operation.union": {
+          "min_count": 48
+        },
+        "operation.difference": {
+          "min_count": 48
+        },
+        "operation.xor": {
+          "min_count": 48
+        },
+        "fill_rule.even_odd": {
+          "min_count": 48
+        },
+        "fill_rule.non_zero": {
+          "min_count": 48
+        },
+        "fill_rule.positive": {
+          "min_count": 48
+        },
+        "fill_rule.negative": {
+          "min_count": 48
+        },
+        "operation.intersection.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.negative": {
+          "min_count": 8
+        },
+        "feature.holes": {
+          "min_count": 24
+        },
+        "feature.boundary_touching": {
+          "min_count": 24
+        },
+        "feature.disjoint": {
+          "min_count": 24
+        },
+        "feature.high_complexity": {
+          "min_count": 24
+        }
+      },
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "open-path-overlay",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "LineString",
+        "MultiLineString"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "operation.intersection": {
+          "min_count": 48
+        },
+        "operation.union": {
+          "min_count": 48
+        },
+        "operation.difference": {
+          "min_count": 48
+        },
+        "operation.xor": {
+          "min_count": 48
+        },
+        "fill_rule.even_odd": {
+          "min_count": 48
+        },
+        "fill_rule.non_zero": {
+          "min_count": 48
+        },
+        "fill_rule.positive": {
+          "min_count": 48
+        },
+        "fill_rule.negative": {
+          "min_count": 48
+        },
+        "operation.intersection.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.negative": {
+          "min_count": 8
+        },
+        "contained": {
+          "min_count": 32
+        },
+        "disjoint": {
+          "min_count": 32
+        },
+        "crossing": {
+          "min_count": 128
+        },
+        "boundary": {
+          "min_count": 24
+        },
+        "points_gt_512": {
+          "min_count": 24
+        }
+      },
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "rectclip",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "contained": {
+          "min_count": 40
+        },
+        "disjoint": {
+          "min_count": 40
+        },
+        "crossing": {
+          "min_count": 120
+        },
+        "boundary": {
+          "min_count": 24
+        },
+        "points_gt_512": {
+          "min_count": 32
+        }
+      },
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "rectclip-lines",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "LineString",
+        "MultiLineString"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "contained": {
+          "min_count": 32
+        },
+        "disjoint": {
+          "min_count": 32
+        },
+        "crossing": {
+          "min_count": 128
+        },
+        "boundary": {
+          "min_count": 24
+        },
+        "points_gt_512": {
+          "min_count": 24
+        }
+      },
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "offset",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon",
+        "LineString",
+        "MultiLineString"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "delta.positive": {
+          "min_count": 96
+        },
+        "delta.negative": {
+          "min_count": 96
+        },
+        "join.miter": {
+          "min_count": 48
+        },
+        "join.round": {
+          "min_count": 48
+        },
+        "join.square": {
+          "min_count": 48
+        },
+        "end.polygon": {
+          "min_count": 24
+        },
+        "end.joined": {
+          "min_count": 24
+        },
+        "end.butt": {
+          "min_count": 24
+        },
+        "end.square": {
+          "min_count": 24
+        },
+        "end.round": {
+          "min_count": 24
+        },
+        "feature.high_complexity": {
+          "min_count": 32
+        },
+        "feature.holes": {
+          "min_count": 24
+        },
+        "zero-delta": {
+          "max_count": 0
+        }
+      },
+      "forbidden_scenarios": [
+        "zero-delta"
+      ]
+    },
+    {
+      "id": "minkowski",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "operation.sum": {
+          "min_count": 96
+        },
+        "operation.difference": {
+          "min_count": 96
+        },
+        "path.closed": {
+          "min_count": 96
+        },
+        "path.open": {
+          "min_count": 96
+        },
+        "identity": {
+          "max_count": 0
+        }
+      },
+      "forbidden_scenarios": [
+        "identity"
+      ]
+    },
+    {
+      "id": "triangulation",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "mode.sweep": {
+          "min_count": 120
+        },
+        "mode.delaunay": {
+          "min_count": 120
+        },
+        "feature.high_complexity": {
+          "min_count": 32
+        }
+      },
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "clip-tree",
+      "eligibility_file": "overlay-candidates.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "operation.intersection": {
+          "min_count": 48
+        },
+        "operation.union": {
+          "min_count": 48
+        },
+        "operation.difference": {
+          "min_count": 48
+        },
+        "operation.xor": {
+          "min_count": 48
+        },
+        "fill_rule.even_odd": {
+          "min_count": 48
+        },
+        "fill_rule.non_zero": {
+          "min_count": 48
+        },
+        "fill_rule.positive": {
+          "min_count": 48
+        },
+        "fill_rule.negative": {
+          "min_count": 48
+        },
+        "operation.intersection.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.negative": {
+          "min_count": 8
+        },
+        "feature.holes": {
+          "min_count": 24
+        },
+        "feature.boundary_touching": {
+          "min_count": 24
+        },
+        "feature.disjoint": {
+          "min_count": 24
+        },
+        "feature.high_complexity": {
+          "min_count": 24
+        }
+      },
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "polytree",
+      "eligibility_file": "overlay-candidates.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "operation.intersection": {
+          "min_count": 48
+        },
+        "operation.union": {
+          "min_count": 48
+        },
+        "operation.difference": {
+          "min_count": 48
+        },
+        "operation.xor": {
+          "min_count": 48
+        },
+        "fill_rule.even_odd": {
+          "min_count": 48
+        },
+        "fill_rule.non_zero": {
+          "min_count": 48
+        },
+        "fill_rule.positive": {
+          "min_count": 48
+        },
+        "fill_rule.negative": {
+          "min_count": 48
+        },
+        "operation.intersection.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.intersection.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.union.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.difference.fill_rule.negative": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.even_odd": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.non_zero": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.positive": {
+          "min_count": 8
+        },
+        "operation.xor.fill_rule.negative": {
+          "min_count": 8
+        },
+        "feature.holes": {
+          "min_count": 24
+        },
+        "feature.boundary_touching": {
+          "min_count": 24
+        },
+        "feature.disjoint": {
+          "min_count": 24
+        },
+        "feature.high_complexity": {
+          "min_count": 24
+        }
+      },
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "batch",
+      "eligibility_file": "overlay-candidates.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {
+        "batch.scalar_next_legacy": {
+          "min_count": 128
+        }
+      },
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "bounds",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon",
+        "LineString",
+        "MultiLineString"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {},
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "simplification",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon",
+        "LineString",
+        "MultiLineString"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {},
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "collinear-trimming",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon",
+        "LineString",
+        "MultiLineString"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {},
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "point-in-polygon",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {},
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "scaling",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon",
+        "LineString",
+        "MultiLineString"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {},
+      "forbidden_scenarios": []
+    },
+    {
+      "id": "translation",
+      "eligibility_file": "shape-inputs.jsonl",
+      "geometry_types": [
+        "Polygon",
+        "MultiPolygon",
+        "LineString",
+        "MultiLineString"
+      ],
+      "required_case_sets": [
+        "verification",
+        "benchmark"
+      ],
+      "scenario_quotas": {},
+      "forbidden_scenarios": []
+    }
+  ],
+  "algorithms": [
+    {
+      "id": "clip_overlay",
+      "release_gated": true,
+      "required_tests": [
+        "Clipper2NextDifferentialClipTests.RandomizedClosedPolygonsAllFillRulesMatchLegacy",
+        "ExternalGeometryCorpus.OverlayVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_external_legacy/geometry_corpus",
+        "BM_external_next/geometry_corpus"
+      ],
+      "required_profiles": [
+        "overlay"
+      ]
+    },
+    {
+      "id": "offset_polygon",
+      "release_gated": true,
+      "required_tests": [
+        "Clipper2NextDifferentialOffsetTests.PolygonJoinTypeMatrixMatchesLegacy",
+        "Clipper2NextDifferentialOffsetTests.OpenEndTypeMatrixMatchesLegacy",
+        "ExternalGeometryCorpus.OffsetVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_external_offset_legacy/geometry_corpus",
+        "BM_external_offset_next_unprepared/geometry_corpus"
+      ],
+      "required_profiles": [
+        "offset"
+      ]
+    },
+    {
+      "id": "open_path_clip",
+      "release_gated": true,
+      "required_tests": [
+        "Clipper2NextDifferentialClipTests.RandomizedOpenSubjectsMatchLegacy",
+        "ExternalGeometryCorpus.OpenPathOverlayVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_external_open_path_overlay_legacy/geometry_corpus",
+        "BM_external_open_path_overlay_next_unprepared/geometry_corpus"
+      ],
+      "required_profiles": [
+        "open-path-overlay"
+      ]
+    },
+    {
+      "id": "rect_clip_polygon",
+      "release_gated": true,
+      "required_tests": [
+        "Clipper2NextDifferentialRectClipTests.DeterministicFuzzPolygonCorpusMatchesLegacy",
+        "ExternalGeometryCorpus.RectClipVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_external_rectclip_legacy/geometry_corpus",
+        "BM_external_rectclip_next_unprepared/geometry_corpus"
+      ],
+      "required_profiles": [
+        "rectclip"
+      ]
+    },
+    {
+      "id": "rect_clip_lines",
+      "release_gated": true,
+      "required_tests": [
+        "Clipper2NextDifferentialRectClipTests.RectClipLinesMatchesLegacy",
+        "ExternalGeometryCorpus.OpenLineClipVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_external_open_line_clip_legacy/geometry_corpus",
+        "BM_external_open_line_clip_next_unprepared/geometry_corpus"
+      ],
+      "required_profiles": [
+        "rectclip-lines"
+      ]
+    },
+    {
+      "id": "clip_tree_polytree",
+      "release_gated": true,
+      "required_tests": [
+        "Clipper2NextDifferentialClipTests.ClipTreeShapeNestedUnionMatchesLegacy",
+        "ExternalGeometryCorpus.ClipTreeVerificationCorpusExecutesAgainstLegacyTreeShape",
+        "ExternalGeometryCorpus.PolyTreeVerificationCorpusExecutesAgainstLegacyTreeShape"
+      ],
+      "required_benchmarks": [
+        "BM_external_clip_tree_legacy/geometry_corpus",
+        "BM_external_clip_tree_next_unprepared/geometry_corpus",
+        "BM_external_polytree_legacy/geometry_corpus",
+        "BM_external_polytree_next_unprepared/geometry_corpus"
+      ],
+      "required_profiles": [
+        "clip-tree",
+        "polytree"
+      ]
+    },
+    {
+      "id": "batch_clip",
+      "release_gated": true,
+      "required_tests": [
+        "ExternalGeometryCorpus.BatchVerificationCorpusExecutesAgainstScalarAndLegacy",
+        "Clipper2NextDeterminismTests.LargeMixedBatchMatchesIndividualAndPreparedExecution"
+      ],
+      "required_benchmarks": [
+        "BM_external_batch_scalar_legacy/geometry_corpus",
+        "BM_external_batch_scalar_next_unprepared/geometry_corpus",
+        "BM_external_batch_next_batch/geometry_corpus"
+      ],
+      "required_profiles": [
+        "batch"
+      ]
+    },
+    {
+      "id": "triangulation",
+      "release_gated": true,
+      "required_tests": [
+        "Clipper2NextDifferentialTriangulationTests.GeneratedSimpleCorpusMatchesLegacy",
+        "ExternalGeometryCorpus.TriangulationVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_external_triangulation_legacy/geometry_corpus",
+        "BM_external_triangulation_next_unprepared/geometry_corpus"
+      ],
+      "required_profiles": [
+        "triangulation"
+      ]
+    },
+    {
+      "id": "minkowski",
+      "release_gated": true,
+      "required_tests": [
+        "Clipper2NextDifferentialMinkowskiTests.LongerGeneratedOpenClosedCorpusMatchesLegacy",
+        "ExternalGeometryCorpus.MinkowskiVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_external_minkowski_legacy/geometry_corpus",
+        "BM_external_minkowski_next_unprepared/geometry_corpus"
+      ],
+      "required_profiles": [
+        "minkowski"
+      ]
+    },
+    {
+      "id": "geometry_algorithms",
+      "release_gated": false,
+      "required_tests": [
+        "Clipper2NextDifferentialGeometryAlgorithmsTests.SimplifyAndRdpGeneratedCorpusMatchesLegacy",
+        "ExternalGeometryCorpus.BoundsVerificationCorpusExecutesAgainstLegacy",
+        "ExternalGeometryCorpus.SimplificationVerificationCorpusExecutesAgainstLegacy",
+        "ExternalGeometryCorpus.CollinearTrimmingVerificationCorpusExecutesAgainstLegacy",
+        "ExternalGeometryCorpus.PointInPolygonVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_external_bounds_legacy/geometry_corpus",
+        "BM_external_bounds_next_unprepared/geometry_corpus"
+      ],
+      "required_profiles": [
+        "bounds",
+        "simplification",
+        "collinear-trimming",
+        "point-in-polygon"
+      ]
+    },
+    {
+      "id": "scaling_and_transforms",
+      "release_gated": false,
+      "required_tests": [
+        "Clipper2NextDifferentialTransformTests.TranslatePathMatchesLegacy",
+        "Clipper2NextDifferentialTransformTests.ScalePathMatchesLegacy",
+        "ExternalGeometryCorpus.ScalingVerificationCorpusExecutesAgainstLegacy",
+        "ExternalGeometryCorpus.TranslationVerificationCorpusExecutesAgainstLegacy"
+      ],
+      "required_benchmarks": [
+        "BM_product_translate_path",
+        "BM_product_scale_path"
+      ],
+      "required_profiles": [
+        "scaling",
+        "translation"
+      ]
+    }
+  ],
+  "performance": {
+    "release_repetitions": 7,
+    "min_time_seconds": 0.5,
+    "min_warmup_time_seconds": 1.0,
+    "release_max_cv_percent": 5.0,
+    "directional_max_cv_percent": 15.0,
+    "min_pair_speedup": 1.2,
+    "min_geomean_speedup": 1.2,
+    "time_field": "real_time"
+  },
+  "provenance": [
+    "git_commit",
+    "git_tree_state",
+    "contract_sha256",
+    "profile_sha256",
+    "benchmark_executable_sha256",
+    "compiler",
+    "build_flags",
+    "runner_id"
+  ]
+}

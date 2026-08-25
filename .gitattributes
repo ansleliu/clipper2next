@@ -1,0 +1,12 @@
+* text=auto eol=lf
+
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+
+# Vendored GEOS XML corpus preserves upstream whitespace verbatim.
+tests/oracle/corpus/external_sources/geos_xml/** -text -diff
+
+# Legacy corpus fixtures preserve upstream text shape verbatim.
+tests/oracle/corpus/legacy/** -text -diff

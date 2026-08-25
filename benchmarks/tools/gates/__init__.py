@@ -1,0 +1,1 @@
+"""Benchmark admission gates."""
