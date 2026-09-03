@@ -21,7 +21,7 @@ def _aggregate(root: Path, paths: list[Path]) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def candidate_source_identity(root: Path) -> str | None:
+def _candidate_source_paths(root: Path) -> list[Path]:
     paths: list[Path] = []
     for name in ("CMakeLists.txt", "conanfile.py", "vcpkg.json"):
         path = root / name
@@ -35,6 +35,130 @@ def candidate_source_identity(root: Path) -> str | None:
                 continue
             if path.suffix in {".cpp", ".h", ".hpp", ".py", ".txt"}:
                 paths.append(path)
+    return sorted(paths)
+
+
+def _git(
+    root: Path,
+    *arguments: str,
+    check: bool = True,
+) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "-C", str(root), *arguments],
+        check=check,
+        capture_output=True,
+    )
+
+
+def _is_candidate_relative_path(relative: str) -> bool:
+    path = Path(relative)
+    if relative in {"CMakeLists.txt", "conanfile.py", "vcpkg.json"}:
+        return True
+    if not path.parts or path.parts[0] not in {"include", "src", "benchmarks"}:
+        return False
+    return "results" not in path.parts and "__pycache__" not in path.parts and (
+        path.suffix in {".cpp", ".h", ".hpp", ".py", ".txt"}
+    )
+
+
+def _head_blobs(root: Path) -> dict[str, str]:
+    completed = _git(root, "ls-tree", "-r", "-z", "HEAD")
+    result: dict[str, str] = {}
+    for record in completed.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, relative = record.split(b"\t", 1)
+        _, kind, blob = metadata.split(b" ", 2)
+        if kind == b"blob":
+            result[relative.decode("utf-8")] = blob.decode("ascii")
+    return result
+
+
+def _canonical_blobs(
+    root: Path,
+    relative_paths: set[str],
+) -> dict[str, str | None]:
+    existing = [
+        relative
+        for relative in sorted(relative_paths)
+        if (root / relative).is_file()
+    ]
+    if any("\n" in relative or "\r" in relative for relative in existing):
+        raise ValueError("source identity paths cannot contain line breaks")
+    result = dict.fromkeys(sorted(relative_paths))
+    if not existing:
+        return result
+    completed = subprocess.run(
+        ["git", "-C", str(root), "hash-object", "--stdin-paths"],
+        input=("\n".join(existing) + "\n").encode("utf-8"),
+        check=True,
+        capture_output=True,
+    )
+    blobs = completed.stdout.decode("ascii").splitlines()
+    if len(blobs) != len(existing):
+        raise RuntimeError("git hash-object returned an incomplete source identity")
+    result.update(zip(existing, blobs, strict=True))
+    return result
+
+
+def _aggregate_blob_map(blobs: dict[str, str | None]) -> str:
+    digest = hashlib.sha256()
+    for relative, blob in sorted(blobs.items()):
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update((blob or "deleted").encode("ascii"))
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
+
+
+def git_repository_identity(root: Path) -> dict | None:
+    inside = _git(root, "rev-parse", "--is-inside-work-tree", check=False)
+    if inside.returncode != 0 or inside.stdout.strip() != b"true":
+        return None
+    head_commit = _git(root, "rev-parse", "HEAD").stdout.decode("ascii").strip()
+    head_tree = _git(root, "rev-parse", "HEAD^{tree}").stdout.decode("ascii").strip()
+    head_blobs = _head_blobs(root)
+    relative_paths = {
+        path.relative_to(root).as_posix()
+        for path in _candidate_source_paths(root)
+    }
+    relative_paths.update(
+        relative
+        for relative in head_blobs
+        if _is_candidate_relative_path(relative)
+    )
+    current = _canonical_blobs(root, relative_paths)
+    baseline = {
+        relative: head_blobs.get(relative)
+        for relative in sorted(relative_paths)
+    }
+    changed = {
+        relative: f"{baseline[relative] or 'untracked'}->{current[relative] or 'deleted'}"
+        for relative in sorted(relative_paths)
+        if baseline[relative] != current[relative]
+    }
+    status = _git(
+        root,
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+    ).stdout
+    return {
+        "head_commit": head_commit,
+        "head_tree": head_tree,
+        "dirty": bool(changed),
+        "worktree_status_dirty": bool(status),
+        "canonical_source_identity": _aggregate_blob_map(current),
+        "canonical_diff_identity": _aggregate_blob_map(changed),
+    }
+
+
+def candidate_source_identity(root: Path) -> str | None:
+    repository = git_repository_identity(root)
+    if repository is not None:
+        return str(repository["canonical_source_identity"])
+    paths = _candidate_source_paths(root)
     return _aggregate(root, paths) if paths else None
 
 
@@ -154,6 +278,7 @@ def collect_evidence_identity(
     data_identity = corpus_identity()
     protocol = protocol_identity(root)
     runtime = runtime_library_identity(benchmark_executable)
+    repository = git_repository_identity(root)
     payload = {
         "benchmark_executable_identity": executable_identity,
         "candidate_source_identity": source_identity,
@@ -161,6 +286,7 @@ def collect_evidence_identity(
         "corpus_identity": data_identity,
         "protocol_identity": protocol,
         "runtime_library_identity": runtime,
+        "git_repository_identity": repository,
     }
     complete = all(
         payload[key] is not None
@@ -170,6 +296,7 @@ def collect_evidence_identity(
             "compiler_identity",
             "corpus_identity",
             "protocol_identity",
+            "git_repository_identity",
         )
     )
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))

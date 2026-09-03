@@ -63,6 +63,8 @@ using foreign_paths = std::vector<foreign_path>;
 
 struct recording_executor final {
     std::size_t invocation_count{};
+    std::size_t item_count{};
+    std::size_t requested_concurrency{};
     next::bulk_execution_error result{next::bulk_execution_error::none};
 };
 
@@ -72,11 +74,12 @@ struct recording_executor final {
     const std::size_t minimum_grain,
     const std::size_t requested_concurrency,
     const next::bulk_task_ref task) noexcept -> next::bulk_execution_error {
-    static_cast<void>(requested_concurrency);
     auto& executor = *static_cast<recording_executor*>(context);
     if (executor.result != next::bulk_execution_error::none) {
         return executor.result;
     }
+    executor.item_count = item_count;
+    executor.requested_concurrency = requested_concurrency;
     const auto grain = std::max<std::size_t>(minimum_grain, 1U);
     for (auto begin = std::size_t{}; begin < item_count; begin += grain) {
         ++executor.invocation_count;
@@ -403,6 +406,36 @@ TEST(Clipper2NextBorrowedOffsetApiTests,
 }
 
 TEST(Clipper2NextBorrowedOffsetApiTests,
+     ExecutorCapabilityAboveKernelMaximumUsesOneEffectiveConcurrency) {
+    const auto source = parallel_eligible_source();
+    auto request = next::borrowed_offset_request64{};
+    request.paths = next::borrow_paths64(source);
+    request.delta = 5.0;
+    request.join_type = next::JoinType::Miter;
+    request.end_type = next::EndType::Polygon;
+    auto reference_state = recording_executor{};
+    const auto reference_executor = next::sync_bulk_executor_ref{
+        &reference_state, 16U, &execute_recorded_chunks};
+    const auto reference = next::offset_stage_checked(
+        request, reference_executor);
+    ASSERT_TRUE(reference.has_value());
+
+    auto wide_state = recording_executor{};
+    const auto wide_executor = next::sync_bulk_executor_ref{
+        &wide_state, 1'000U, &execute_recorded_chunks};
+    const auto result = next::offset_stage_checked(request, wide_executor);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(wide_state.requested_concurrency, 16U);
+    EXPECT_EQ(wide_state.item_count, reference_state.item_count);
+    EXPECT_EQ(wide_state.item_count, 64U);
+    EXPECT_EQ(
+        result->stats.planned_engine_workspace_bytes,
+        reference->stats.planned_engine_workspace_bytes);
+    EXPECT_EQ(materialize(result->paths), materialize(reference->paths));
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests,
      ExecutorFailureIsNotReportedAsGeometryFailure) {
     const auto source = parallel_eligible_source();
     auto request = next::borrowed_offset_request64{};
@@ -420,7 +453,7 @@ TEST(Clipper2NextBorrowedOffsetApiTests,
 }
 
 TEST(Clipper2NextBorrowedOffsetApiTests,
-     ParallelWorkspaceIsAdmittedBeforeExecutorInvocation) {
+     ParallelWorkspaceSharesTheDirectPreparationPeak) {
     const auto source = parallel_eligible_source();
     auto request = next::borrowed_offset_request64{};
     request.paths = next::borrow_paths64(source);
@@ -435,9 +468,60 @@ TEST(Clipper2NextBorrowedOffsetApiTests,
 
     const auto result = next::offset_stage_checked(request, executor);
 
-    ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(), next::clipper_error_code::resource_limit);
-    EXPECT_EQ(executor_state.invocation_count, 0U);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_GT(executor_state.invocation_count, 0U);
+    EXPECT_EQ(
+        result->stats.planned_engine_workspace_bytes,
+        serial->stats.planned_engine_workspace_bytes);
+    EXPECT_EQ(materialize(result->paths), materialize(serial->paths));
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests,
+     ActualCleanupSizeAdmitsDenseDisjointParallelOffset) {
+    const auto source = parallel_eligible_source();
+    auto request = next::borrowed_offset_request64{};
+    request.paths = next::borrow_paths64(source);
+    request.delta = 5.0;
+    request.join_type = next::JoinType::Miter;
+    request.end_type = next::EndType::Polygon;
+    const auto reference = next::offset_stage_checked(request);
+    ASSERT_TRUE(reference.has_value());
+    request.limits.maximum_engine_work = 2'147'483'648ULL;
+    request.limits.maximum_engine_workspace_bytes =
+        128ULL * 1024ULL * 1024ULL * 1024ULL;
+    auto executor_state = recording_executor{};
+    const auto executor = next::sync_bulk_executor_ref{
+        &executor_state, 16U, &execute_recorded_chunks};
+
+    const auto result = next::offset_stage_checked(request, executor);
+
+    ASSERT_TRUE(result.has_value())
+        << "error=" << static_cast<int>(result.error())
+        << " reference_points=" << reference->stats.output_point_count;
+    EXPECT_TRUE(result->stats.output_is_disjoint_simple_shells);
+    EXPECT_GT(executor_state.invocation_count, 0U);
+    EXPECT_LE(
+        result->stats.planned_engine_work,
+        request.limits.maximum_engine_work);
+    EXPECT_LE(
+        result->stats.planned_engine_workspace_bytes,
+        request.limits.maximum_engine_workspace_bytes);
+    EXPECT_EQ(materialize(result->paths), materialize(reference->paths));
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests,
+     NegativeOffsetDoesNotClaimDisjointShellTopology) {
+    const auto source = parallel_eligible_source();
+    auto request = next::borrowed_offset_request64{};
+    request.paths = next::borrow_paths64(source);
+    request.delta = -5.0;
+    request.join_type = next::JoinType::Miter;
+    request.end_type = next::EndType::Polygon;
+
+    const auto result = next::offset_stage_checked(request);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_FALSE(result->stats.output_is_disjoint_simple_shells);
 }
 
 TEST(Clipper2NextBorrowedOffsetApiTests,

@@ -1,5 +1,6 @@
 #include "clipper2next/offset/operations.h"
-#include "api/private/engine_resource_plan.h"
+#include "api/private/borrowed_offset_execution.h"
+#include "support/private/engine_resource_plan.h"
 #include "clip/private/borrowed_topology_access.h"
 #include "clip/private/clip_request_validation.h"
 #include "offset/private/offset_algorithm.h"
@@ -9,14 +10,12 @@
 #include <algorithm>
 #include <cstddef>
 #include <limits>
-#include <new>
 #include <span>
-#include <stdexcept>
 #include <utility>
 #include <vector>
-namespace clipper2next {
-namespace {
-[[nodiscard]] auto execute_borrowed_offset_stage(
+namespace clipper2next::internal {
+
+auto execute_borrowed_offset_stage(
     const borrowed_offset_request64& request,
     const sync_bulk_executor_ref executor)
     -> expected_borrowed_offset_stage_result64 {
@@ -56,24 +55,30 @@ namespace {
         }
         stats.input_point_count += count;
     }
-    const auto engine_plan = internal::plan_offset_engine_resources(
+    const auto effective_concurrency = executor.has_parallel_capability()
+        ? std::min(
+              executor.concurrency_limit(),
+              internal::offset_parallel_maximum_concurrency)
+        : 1U;
+    const auto engine_plan = internal::plan_offset_generation_resources(
         stats.input_path_count, stats.input_point_count,
         maximum_path_point_count, request.delta, request.join_type,
         request.end_type, request.arc_tolerance,
         request.arc_segments_per_quadrant,
-        executor.has_parallel_capability()
-            ? std::min(
-                  executor.concurrency_limit(),
-                  internal::offset_parallel_maximum_concurrency)
-            : 1U);
-    stats.planned_engine_work = engine_plan.work;
-    stats.planned_engine_workspace_bytes = engine_plan.workspace_bytes;
+        effective_concurrency);
     if (engine_plan.work > request.limits.maximum_engine_work ||
         engine_plan.workspace_bytes >
             request.limits.maximum_engine_workspace_bytes) {
         return make_clipper_error<borrowed_offset_stage_result64>(
             clipper_error_code::resource_limit);
     }
+    auto engine_resources = internal::offset_engine_resource_context{
+        .generation = engine_plan,
+        .selected = engine_plan,
+        .maximum_work = request.limits.maximum_engine_work,
+        .maximum_workspace_bytes =
+            request.limits.maximum_engine_workspace_bytes,
+    };
 
     auto input_workspace_bytes = std::size_t{};
     if (const auto error = internal::measure_offset_path_storage(
@@ -189,7 +194,13 @@ namespace {
             .coordinate_rounding = request.coordinate_rounding,
         },
         nullptr,
-        executor);
+        executor,
+        &engine_resources,
+        &stats.output_is_disjoint_simple_shells);
+
+    stats.planned_engine_work = engine_resources.selected.work;
+    stats.planned_engine_workspace_bytes =
+        engine_resources.selected.workspace_bytes;
 
     stats.output_path_count = result.paths.size();
     if (stats.output_path_count > request.limits.maximum_output_path_count) {
@@ -222,28 +233,5 @@ namespace {
     }
     return result;
 }
-}  // namespace
-auto offset_stage_checked(const borrowed_offset_request64& request)
-    -> expected_borrowed_offset_stage_result64 {
-    return offset_stage_checked(request, {});
-}
-auto offset_stage_checked(
-    const borrowed_offset_request64& request,
-    const sync_bulk_executor_ref executor)
-    -> expected_borrowed_offset_stage_result64 {
-    try {
-        return execute_borrowed_offset_stage(request, executor);
-    } catch (const std::bad_alloc&) {
-        return make_clipper_error<borrowed_offset_stage_result64>(
-            clipper_error_code::allocation_failure);
-    } catch (const std::length_error&) {
-        return make_clipper_error<borrowed_offset_stage_result64>(
-            clipper_error_code::resource_limit);
-    } catch (const clipper_error& error) {
-        return make_clipper_error<borrowed_offset_stage_result64>(error.code());
-    } catch (...) {
-        return make_clipper_error<borrowed_offset_stage_result64>(
-            clipper_error_code::internal_error);
-    }
-}
-}  // namespace clipper2next
+
+}  // namespace clipper2next::internal

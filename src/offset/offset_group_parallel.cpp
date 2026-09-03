@@ -129,17 +129,18 @@ void build_offset_group_paths_with_executor(
         return;
     }
 
+    const auto effective_concurrency = std::min(
+        executor.concurrency_limit(),
+        offset_parallel_maximum_concurrency);
     const auto chunks =
-        build_offset_chunks(group, executor.concurrency_limit());
+        build_offset_chunks(group, effective_concurrency);
     auto results = std::vector<path_set64>(chunks.size());
     auto failure = bulk_failure_state{};
     auto context = offset_bulk_context{
         &group, &options, &chunks, &results, &failure, delta};
     const auto executor_error = executor.execute(
         chunks.size(), 1U,
-        std::min(
-            executor.concurrency_limit(),
-            offset_parallel_maximum_concurrency),
+        effective_concurrency,
         bulk_task_ref{&context, &build_offset_chunk_range});
     if (const auto error = failure.error(); error != clipper_error_code::ok) {
         raise_clipper_error(error);

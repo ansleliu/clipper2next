@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(clipper2next VERSION 4.0.0 LANGUAGES CXX)
+project(clipper2next VERSION 4.0.1 LANGUAGES CXX)
 
 if(NOT CMAKE_GENERATOR STREQUAL "Ninja")
   message(FATAL_ERROR
@@ -181,6 +181,7 @@ target_sources(clipper2next
     src/api/request_metadata.cpp
     src/api/requests.cpp
     src/api/requests_offset.cpp
+    src/api/requests_offset_entry.cpp
     src/api/requests_offset_owning.cpp
     src/api/requests_rectclip.cpp
     src/batch/batch.cpp
@@ -343,7 +344,8 @@ target_sources(clipper2next
     BASE_DIRS src
     FILES
       src/api/private/borrowed_topology_pipeline.h
-      src/api/private/engine_resource_plan.h
+      src/api/private/borrowed_offset_execution.h
+      src/support/private/engine_resource_plan.h
       src/batch/private/batch_clip_executor.h
       src/clip/engine/private/engine_active_list.h
       src/clip/engine/private/engine_ael_builder.h

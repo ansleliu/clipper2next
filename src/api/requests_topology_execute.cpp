@@ -1,5 +1,5 @@
 #include "api/private/borrowed_topology_pipeline.h"
-#include "api/private/engine_resource_plan.h"
+#include "support/private/engine_resource_plan.h"
 
 #include "clip/engine/private/engine_path_builder.h"
 #include "clip/engine/private/engine_scanbeam_processor.h"

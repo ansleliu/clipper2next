@@ -10,6 +10,7 @@
 #include <new>
 #include <ranges>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -77,6 +78,20 @@ struct thread_executor final {
 }
 
 [[nodiscard]] auto source_paths() -> clipper2next::Paths64 {
+    auto paths = clipper2next::Paths64{};
+    paths.reserve(512U);
+    for (auto index = std::int64_t{}; index < 512; ++index) {
+        auto path = clipper2next::Path64{};
+        path.reserve(1'024U);
+        for (auto x = std::int64_t{-512}; x < 512; ++x) {
+            path.push_back({index * 2'000 + x, x * x});
+        }
+        paths.push_back(std::move(path));
+    }
+    return paths;
+}
+
+[[nodiscard]] auto dense_collinear_paths() -> clipper2next::Paths64 {
     auto paths = clipper2next::Paths64{};
     paths.reserve(512U);
     for (auto index = std::int64_t{}; index < 512; ++index) {
@@ -154,7 +169,47 @@ void BM_offset_executor_concurrent(benchmark::State& state) {
     }
 }
 
+void BM_offset_executor_collinear_serial(benchmark::State& state) {
+    const auto paths = dense_collinear_paths();
+    const auto request = request_for(paths);
+    for (auto iteration : state) {
+        static_cast<void>(iteration);
+        auto result = clipper2next::offset_stage_checked(request);
+        if (!result) {
+            state.SkipWithError("serial collinear offset failed");
+            break;
+        }
+        benchmark::DoNotOptimize(result->paths.points().data());
+    }
+}
+
+void BM_offset_executor_collinear_concurrent(benchmark::State& state) {
+    const auto paths = dense_collinear_paths();
+    const auto request = request_for(paths);
+    auto executor_state = thread_executor{
+        static_cast<std::size_t>(state.range(0))};
+    const auto executor = clipper2next::sync_bulk_executor_ref{
+        &executor_state, executor_state.worker_count, &execute_chunks};
+    const auto serial = clipper2next::offset_stage_checked(request);
+    const auto check = clipper2next::offset_stage_checked(request, executor);
+    if (!serial || !check || !same_path_set(serial->paths, check->paths)) {
+        state.SkipWithError("executor collinear offset differs from serial output");
+        return;
+    }
+    for (auto iteration : state) {
+        static_cast<void>(iteration);
+        auto result = clipper2next::offset_stage_checked(request, executor);
+        if (!result) {
+            state.SkipWithError("executor collinear offset failed");
+            break;
+        }
+        benchmark::DoNotOptimize(result->paths.points().data());
+    }
+}
+
 BENCHMARK(BM_offset_executor_serial);
 BENCHMARK(BM_offset_executor_concurrent)->Arg(2)->Arg(4)->Arg(8)->Arg(16);
+BENCHMARK(BM_offset_executor_collinear_serial);
+BENCHMARK(BM_offset_executor_collinear_concurrent)->Arg(16);
 
 } // namespace

@@ -113,9 +113,14 @@ auto execute_offset_algorithm(offset_state& state,
                               const std::vector<offset_group>& groups,
                               double delta,
                                path_set64& solution,
-                               const offset_algorithm_options& options,
+                              const offset_algorithm_options& options,
                                delta_callback_ref delta_callback,
-                               const sync_bulk_executor_ref executor) -> void {
+                               const sync_bulk_executor_ref executor,
+                               offset_engine_resource_context* const resources,
+                               bool* const output_is_disjoint_simple_shells) -> void {
+    if (output_is_disjoint_simple_shells != nullptr) {
+        *output_is_disjoint_simple_shells = false;
+    }
     const auto rounding_guard = scoped_nearest_rounding{};
     solution.clear();
     state.reset();
@@ -139,13 +144,28 @@ auto execute_offset_algorithm(offset_state& state,
     }
 
     const auto paths_reversed = check_reverse_orientation(groups);
-    if (can_return_direct_convex_offset(groups, delta, nullptr, options, paths_reversed) ||
+    const auto direct =
+        can_return_direct_convex_offset(
+            groups, delta, nullptr, options, paths_reversed) ||
         can_return_direct_simple_offset(
             groups, solution, delta, nullptr, options, paths_reversed) ||
         can_return_direct_disjoint_simple_offset(
-            groups, solution, delta, nullptr, options, paths_reversed)) {
+            groups, solution, delta, nullptr, options, paths_reversed) ||
+        try_prepare_direct_disjoint_simple_offset(
+            groups, solution, delta, options, paths_reversed);
+    if (resources != nullptr) {
+        const auto error = finalize_offset_engine_resources(
+            *resources, solution.size(), solution.point_count(), !direct);
+        if (error != clipper_error_code::ok) {
+            raise_clipper_error(error);
+        }
+    }
+    if (direct) {
         canonicalize_direct_offset_solution(
             solution, options.reverse_solution != paths_reversed);
+        if (output_is_disjoint_simple_shells != nullptr) {
+            *output_is_disjoint_simple_shells = true;
+        }
         return;
     }
     union_offset_solution(solution, options, paths_reversed);

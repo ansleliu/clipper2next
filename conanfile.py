@@ -8,7 +8,7 @@ from conan.tools.files import copy, rmdir
 
 class Clipper2NextConan(ConanFile):
     name = "clipper2next"
-    version = "4.0.0"
+    version = "4.0.1"
     package_type = "shared-library"
     license = "BSL-1.0"
     description = "Standalone C++23 integer polygon geometry library"

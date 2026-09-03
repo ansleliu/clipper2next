@@ -8,6 +8,7 @@
 #include "clipper2next/api/execution.h"
 #include "clipper2next/polygon/poly_tree.h"
 #include "clipper2next/core/path_set.h"
+#include "support/private/engine_resource_plan.h"
 
 namespace clipper2next::internal {
 
@@ -37,7 +38,9 @@ auto execute_offset_algorithm(offset_state& state,
                               path_set64& solution,
                               const offset_algorithm_options& options,
                               delta_callback_ref delta_callback,
-                              sync_bulk_executor_ref executor = {}) -> void;
+                              sync_bulk_executor_ref executor = {},
+                              offset_engine_resource_context* resources = nullptr,
+                              bool* output_is_disjoint_simple_shells = nullptr) -> void;
 
 auto execute_offset_algorithm_scalar_reference(offset_state& state,
                                                const std::vector<offset_group>& groups,

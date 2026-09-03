@@ -345,8 +345,20 @@ class CalibratedExternalPerformanceGateTests(unittest.TestCase):
                 "corpus_identity",
                 "protocol_identity",
                 "runtime_library_identity",
+                "git_repository_identity",
             ):
                 self.assertIn(key, metadata)
+            repository_identity = metadata["git_repository_identity"]
+            self.assertRegex(
+                repository_identity["head_commit"], r"^[0-9a-f]{40}$"
+            )
+            self.assertRegex(
+                repository_identity["head_tree"], r"^[0-9a-f]{40}$"
+            )
+            self.assertRegex(
+                repository_identity["canonical_diff_identity"],
+                r"^sha256:[0-9a-f]{64}$",
+            )
             self.assertEqual(
                 summary["evidence_identity"], metadata["evidence_identity"]
             )

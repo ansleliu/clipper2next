@@ -116,6 +116,13 @@ set_tests_properties(clipper2next_gate_conan_publication_contract PROPERTIES
   WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
   LABELS "gate;architecture;packaging")
 
+add_test(NAME clipper2next_gate_evidence_identity
+  COMMAND "${Python3_EXECUTABLE}" -m unittest
+    benchmarks.tools.tests.evidence_identity_tests)
+set_tests_properties(clipper2next_gate_evidence_identity PROPERTIES
+  WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+  LABELS "gate;architecture;performance")
+
 get_target_property(clipper2next_product_sources clipper2next SOURCES)
 set(clipper2next_internal_test_sources)
 foreach(clipper2next_product_source IN LISTS clipper2next_product_sources)

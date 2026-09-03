@@ -31,6 +31,12 @@ namespace clipper2next::internal {
     PolyTree64* solution_tree,
     const offset_algorithm_options& options,
     bool paths_reversed) -> bool;
+[[nodiscard]] auto try_prepare_direct_disjoint_simple_offset(
+    const std::vector<offset_group>& groups,
+    path_set64& solution,
+    double delta,
+    const offset_algorithm_options& options,
+    bool paths_reversed) -> bool;
 [[nodiscard]] auto can_return_direct_disjoint_simple_offset(
     const std::vector<offset_group>& groups,
     const path_set64& solution,

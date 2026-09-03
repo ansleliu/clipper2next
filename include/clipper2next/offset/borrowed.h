@@ -56,6 +56,10 @@ struct borrowed_offset_stage_stats64 final {
     std::size_t peak_workspace_bytes{};
     std::size_t planned_engine_work{};
     std::size_t planned_engine_workspace_bytes{};
+    // True only when the stage proved that every output path is a simple,
+    // pairwise-disjoint shell. Consumers may then materialize one polygon per
+    // path without running another boolean union.
+    bool output_is_disjoint_simple_shells{};
 };
 
 struct borrowed_offset_stage_result64 final {

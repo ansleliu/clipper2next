@@ -1,12 +1,13 @@
 #include "offset/private/offset_algorithm.h"
 
 #include "clipper2next/geometry.h"
+#include "clipper2next/geometry/algorithms.h"
 #include "clipper2next/geometry/core.h"
 #include "geometry/private/path_simplicity.h"
-#include "support/private/union_component_grouping.h"
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace clipper2next::internal {
 namespace {
@@ -14,6 +15,8 @@ namespace {
 constexpr std::size_t direct_simple_path_scan_limit = 64U;
 constexpr std::size_t direct_disjoint_simple_pairwise_path_count_limit = 16U;
 constexpr std::size_t direct_disjoint_simple_path_count_limit = 256U;
+constexpr std::size_t prepared_disjoint_path_count_limit = 4096U;
+constexpr std::size_t prepared_simple_path_scan_limit = 512U;
 
 [[nodiscard]] auto paths_are_pairwise_bbox_disjoint_quadratic(
     const std::vector<Rect64>& path_bounds) -> bool {
@@ -27,9 +30,34 @@ constexpr std::size_t direct_disjoint_simple_path_count_limit = 256U;
 
 [[nodiscard]] auto paths_are_pairwise_bbox_disjoint_sweep(const std::vector<Rect64>& path_bounds)
     -> bool {
-    const auto components = group_union_components_by_bounds(path_bounds);
-    for (const auto& component : components) {
-        if (component.size() > 1U) { return false; }
+    auto ordered = std::vector<std::size_t>(path_bounds.size());
+    std::iota(ordered.begin(), ordered.end(), std::size_t{});
+    std::ranges::sort(
+        ordered,
+        [&path_bounds](const std::size_t first, const std::size_t second) {
+            const auto& first_bounds = path_bounds[first];
+            const auto& second_bounds = path_bounds[second];
+            if (first_bounds.left != second_bounds.left) {
+                return first_bounds.left < second_bounds.left;
+            }
+            if (first_bounds.right != second_bounds.right) {
+                return first_bounds.right < second_bounds.right;
+            }
+            return first < second;
+        });
+    auto active = std::vector<std::size_t>{};
+    active.reserve(path_bounds.size());
+    for (const auto current : ordered) {
+        const auto& bounds = path_bounds[current];
+        std::erase_if(active, [&](const std::size_t index) {
+            return path_bounds[index].right < bounds.left;
+        });
+        for (const auto index : active) {
+            if (path_bounds[index].intersects(bounds)) {
+                return false;
+            }
+        }
+        active.push_back(current);
     }
     return true;
 }
@@ -130,6 +158,49 @@ auto can_return_direct_disjoint_simple_offset(const std::vector<offset_group>& g
            groups.size() == 1 &&
            groups.front().end_type == EndType::Polygon &&
            all_paths_are_simple_and_pairwise_disjoint(solution, paths_reversed);
+}
+
+auto try_prepare_direct_disjoint_simple_offset(
+    const std::vector<offset_group>& groups,
+    path_set64& solution,
+    const double delta,
+    const offset_algorithm_options& options,
+    const bool paths_reversed) -> bool {
+    if (delta <= 0.0 || options.preserve_collinear ||
+        groups.size() != 1U ||
+        groups.front().end_type != EndType::Polygon ||
+        solution.size() < 2U ||
+        solution.size() > prepared_disjoint_path_count_limit) {
+        return false;
+    }
+
+    auto prepared = path_set64{};
+    prepared.reserve(solution.size(), solution.point_count());
+    auto path_bounds = std::vector<Rect64>{};
+    path_bounds.reserve(solution.size());
+    for (const auto path : solution) {
+        auto materialized = Path64{path.begin(), path.end()};
+        auto candidate = trim_collinear(materialized, false);
+        if (candidate.size() < 3U ||
+            !path_matches_direct_fill_orientation(
+                candidate, paths_reversed) ||
+            !path_simplicity::path_is_provably_simple(
+                candidate, prepared_simple_path_scan_limit)) {
+            return false;
+        }
+        auto accumulator = bounds_accumulator<std::int64_t>{};
+        for (const auto& point : candidate) {
+            accumulator.include(point);
+        }
+        path_bounds.emplace_back(accumulator.rect());
+        prepared.append(
+            candidate, geotypes::PathClosure::ClosedImplicit);
+    }
+    if (!paths_are_pairwise_bbox_disjoint(path_bounds)) {
+        return false;
+    }
+    solution = std::move(prepared);
+    return true;
 }
 
 auto can_return_direct_disjoint_simple_offset(const std::vector<offset_group>& groups,

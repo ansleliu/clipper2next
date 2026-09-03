@@ -1,4 +1,4 @@
-#include "api/private/engine_resource_plan.h"
+#include "support/private/engine_resource_plan.h"
 
 #include "clip/engine/private/engine_types.h"
 #include "offset/private/offset_geometry.h"
@@ -52,7 +52,7 @@ auto plan_clip_engine_resources(const std::size_t input_point_count) noexcept
     return plan_for_point_bound(input_point_count);
 }
 
-auto plan_offset_engine_resources(
+auto plan_offset_generation_resources(
     const std::size_t input_path_count,
     const std::size_t input_point_count,
     const std::size_t maximum_path_point_count,
@@ -71,7 +71,44 @@ auto plan_offset_engine_resources(
     }
     const auto point_bound =
         saturating_product(input_point_count, expansion);
-    auto plan = plan_for_point_bound(point_bound);
+    constexpr auto direct_path_scan_limit = std::size_t{512U};
+    const auto direct_preparation_work = saturating_product(
+        input_path_count,
+        saturating_product(
+            direct_path_scan_limit, direct_path_scan_limit));
+    const auto work = saturating_add(
+        saturating_add(
+            saturating_product(point_bound, 4U),
+            saturating_product(input_point_count, 8U)),
+        saturating_add(
+            saturating_product(input_path_count, input_path_count),
+            direct_preparation_work));
+    const auto retained_output_bytes = saturating_product(
+        point_bound, sizeof(Point64));
+    const auto per_task_scratch_bytes = saturating_add(
+        sizeof(offset_state),
+        saturating_add(
+            saturating_product(
+                maximum_path_point_count, sizeof(PointD)),
+            saturating_product(
+                saturating_product(maximum_path_point_count, expansion),
+                sizeof(Point64))));
+    const auto direct_candidate_bytes = saturating_add(
+        saturating_product(retained_output_bytes, 2U),
+        saturating_add(
+            saturating_product(
+                input_path_count,
+                sizeof(Rect64) + 3U * sizeof(std::size_t) +
+                    sizeof(geotypes::PathDescriptor)),
+            saturating_product(
+                maximum_path_point_count, 2U * sizeof(Point64))));
+    auto plan = engine_resource_plan{
+        .work = work,
+        .workspace_bytes = std::max(
+            direct_candidate_bytes,
+            saturating_add(
+                retained_output_bytes, per_task_scratch_bytes)),
+    };
     if (concurrency_limit < offset_parallel_minimum_concurrency ||
         input_path_count < offset_parallel_minimum_path_count ||
         input_point_count < offset_parallel_minimum_point_count) {
@@ -85,16 +122,6 @@ auto plan_offset_engine_resources(
     const auto planning_bytes = saturating_product(
         chunk_count,
         2U * sizeof(std::size_t) + sizeof(path_set64));
-    const auto retained_output_bytes = saturating_product(
-        point_bound, sizeof(Point64));
-    const auto per_task_scratch_bytes = saturating_add(
-        sizeof(offset_state),
-        saturating_add(
-            saturating_product(
-                maximum_path_point_count, sizeof(PointD)),
-            saturating_product(
-                saturating_product(maximum_path_point_count, expansion),
-                sizeof(Point64))));
     const auto parallel_phase_bytes = saturating_add(
         planning_bytes,
         saturating_add(
@@ -104,10 +131,40 @@ auto plan_offset_engine_resources(
     const auto merge_phase_bytes = saturating_add(
         planning_bytes,
         saturating_product(retained_output_bytes, 2U));
-    plan.workspace_bytes = saturating_add(
+    plan.workspace_bytes = std::max(
         plan.workspace_bytes,
         std::max(parallel_phase_bytes, merge_phase_bytes));
     return plan;
+}
+
+auto finalize_offset_engine_resources(
+    offset_engine_resource_context& context,
+    const std::size_t output_path_count,
+    const std::size_t output_point_count,
+    const bool requires_cleanup) noexcept -> clipper_error_code {
+    context.selected = context.generation;
+    if (requires_cleanup) {
+        const auto cleanup = plan_clip_engine_resources(output_point_count);
+        auto retained_output_bytes = std::size_t{};
+        if (measure_offset_path_storage(
+                output_path_count,
+                output_point_count,
+                sizeof(geotypes::PathDescriptor),
+                retained_output_bytes) != clipper_error_code::ok) {
+            return clipper_error_code::resource_limit;
+        }
+        context.selected.work = saturating_add(
+            context.generation.work, cleanup.work);
+        context.selected.workspace_bytes = std::max(
+            context.generation.workspace_bytes,
+            saturating_add(
+                retained_output_bytes, cleanup.workspace_bytes));
+    }
+    return context.selected.work > context.maximum_work ||
+            context.selected.workspace_bytes >
+                context.maximum_workspace_bytes
+        ? clipper_error_code::resource_limit
+        : clipper_error_code::ok;
 }
 
 auto measure_offset_path_storage(
