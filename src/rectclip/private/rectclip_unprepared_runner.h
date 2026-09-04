@@ -20,7 +20,7 @@ struct rectclip_unprepared_result final {
     bool check_coordinate_range,
     bool use_avx2,
     Rect64& path_bounds) -> bool {
-    if (use_avx2 && path.size() >= 8U) {
+    if (use_avx2 && path.size() >= 2U) {
         return rectclip_unprepared_path_bounds_avx2(
             path, check_coordinate_range, path_bounds);
     }

@@ -27,9 +27,8 @@ namespace {
 auto copy_zero_delta_paths(const std::vector<offset_group>& groups, path_set64& solution) -> void {
     solution.reserve(calc_solution_capacity(groups), 0U);
     for (const auto& group : groups) {
-        const auto closure = is_closed_path(group.end_type)
-                                 ? geotypes::PathClosure::ClosedImplicit
-                                 : geotypes::PathClosure::Open;
+        const auto closure = is_closed_path(group.end_type) ? geotypes::PathClosure::ClosedImplicit
+                                                            : geotypes::PathClosure::Open;
         for (std::size_t index = 0; index < group.path_count(); ++index) {
             solution.append(group.path(index), closure);
         }
@@ -51,8 +50,7 @@ auto build_offset_groups(offset_state& state,
         .reverse_solution = options.reverse_solution,
         .coordinate_rounding = options.coordinate_rounding,
     };
-    const auto use_parallel = executor.has_parallel_capability() &&
-                              delta_callback == nullptr;
+    const auto use_parallel = executor.has_parallel_capability() && delta_callback == nullptr;
     for (const auto& group : groups) {
         if (use_parallel) {
             build_offset_group_paths_parallel(
@@ -65,15 +63,15 @@ auto build_offset_groups(offset_state& state,
 
 class flat_offset_union_writer final {
 public:
-    explicit flat_offset_union_writer(path_set64& target) noexcept : builder_{target} {}
+    explicit flat_offset_union_writer(path_set64& target) noexcept
+        : builder_{target} {}
 
     [[nodiscard]] auto begin(const topology_layout64& layout) -> clipper_error_code {
         builder_.begin(layout.ring_count, layout.point_count);
         return clipper_error_code::ok;
     }
     [[nodiscard]] auto acquire(const topology_ring_layout64& ring,
-                               std::span<geotypes::Point2i64>& destination)
-        -> clipper_error_code {
+                               std::span<geotypes::Point2i64>& destination) -> clipper_error_code {
         destination = builder_.acquire(ring.point_count, geotypes::PathClosure::ClosedImplicit);
         return clipper_error_code::ok;
     }
@@ -100,10 +98,8 @@ auto union_offset_solution(path_set64& solution,
     request.options.reverse_solution = options.reverse_solution != paths_reversed;
     request.limits.maximum_input_path_count = solution.size();
     request.limits.maximum_input_point_count = solution.point_count();
-    if (!clip_topology_checked(request, make_topology_writer64(writer))) {
-        solution.clear();
-        return;
-    }
+    const auto union_result = clip_topology_checked(request, make_topology_writer64(writer));
+    if (!union_result) { raise_clipper_error(union_result.error()); }
     solution = std::move(result);
 }
 
@@ -112,15 +108,13 @@ auto union_offset_solution(path_set64& solution,
 auto execute_offset_algorithm(offset_state& state,
                               const std::vector<offset_group>& groups,
                               double delta,
-                               path_set64& solution,
+                              path_set64& solution,
                               const offset_algorithm_options& options,
-                               delta_callback_ref delta_callback,
-                               const sync_bulk_executor_ref executor,
-                               offset_engine_resource_context* const resources,
-                               bool* const output_is_disjoint_simple_shells) -> void {
-    if (output_is_disjoint_simple_shells != nullptr) {
-        *output_is_disjoint_simple_shells = false;
-    }
+                              delta_callback_ref delta_callback,
+                              const sync_bulk_executor_ref executor,
+                              offset_engine_resource_context* const resources,
+                              bool* const output_is_disjoint_simple_shells) -> void {
+    if (output_is_disjoint_simple_shells != nullptr) { *output_is_disjoint_simple_shells = false; }
     const auto rounding_guard = scoped_nearest_rounding{};
     solution.clear();
     state.reset();
@@ -136,8 +130,7 @@ auto execute_offset_algorithm(offset_state& state,
     }
 
     solution.reserve(calc_solution_capacity(groups), 0U);
-    build_offset_groups(
-        state, groups, delta, options, delta_callback, executor, solution);
+    build_offset_groups(state, groups, delta, options, delta_callback, executor, solution);
     if (solution.empty() || !offset_solution_in_range(solution)) {
         solution.clear();
         return;
@@ -145,24 +138,18 @@ auto execute_offset_algorithm(offset_state& state,
 
     const auto paths_reversed = check_reverse_orientation(groups);
     const auto direct =
-        can_return_direct_convex_offset(
-            groups, delta, nullptr, options, paths_reversed) ||
         can_return_direct_simple_offset(
             groups, solution, delta, nullptr, options, paths_reversed) ||
         can_return_direct_disjoint_simple_offset(
             groups, solution, delta, nullptr, options, paths_reversed) ||
-        try_prepare_direct_disjoint_simple_offset(
-            groups, solution, delta, options, paths_reversed);
+        try_prepare_direct_disjoint_simple_offset(groups, solution, delta, options, paths_reversed);
     if (resources != nullptr) {
         const auto error = finalize_offset_engine_resources(
             *resources, solution.size(), solution.point_count(), !direct);
-        if (error != clipper_error_code::ok) {
-            raise_clipper_error(error);
-        }
+        if (error != clipper_error_code::ok) { raise_clipper_error(error); }
     }
     if (direct) {
-        canonicalize_direct_offset_solution(
-            solution, options.reverse_solution != paths_reversed);
+        canonicalize_direct_offset_solution(solution, options.reverse_solution != paths_reversed);
         if (output_is_disjoint_simple_shells != nullptr) {
             *output_is_disjoint_simple_shells = true;
         }

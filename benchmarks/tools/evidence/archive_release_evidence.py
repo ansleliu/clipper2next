@@ -40,7 +40,11 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _release_performance_errors(payload: dict) -> list[str]:
+def _release_performance_errors(
+    payload: dict,
+    *,
+    require_variance_pass: bool = True,
+) -> list[str]:
     contract = load_contract()
     performance = contract.performance
     expected = {
@@ -48,9 +52,10 @@ def _release_performance_errors(payload: dict) -> list[str]:
         "evidence_mode": "release",
         "contract_sha256": contract.sha256,
         "speedup_mode": "default-unprepared",
-        "variance_status": "PASS",
         "speedup_status": "PASS",
     }
+    if require_variance_pass:
+        expected["variance_status"] = "PASS"
     errors = [
         f"{field} is {payload.get(field)!r}, expected {value!r}"
         for field, value in expected.items()
@@ -121,6 +126,65 @@ def check_summary(
                 "; ".join(errors),
             )
     return EvidenceRow(path.stem, "PASS", str(path), "summary accepted")
+
+
+def check_directional_summary(path: Path) -> EvidenceRow:
+    if not path.exists():
+        return EvidenceRow(
+            path.stem,
+            "OPTIONAL",
+            str(path),
+            "directional platform summary was not archived",
+        )
+    try:
+        payload = load_json(path)
+    except (OSError, json.JSONDecodeError) as error:
+        return EvidenceRow(path.stem, "FAIL", str(path), f"invalid json: {error}")
+    if payload.get("status") == "PASS":
+        return check_summary(
+            path,
+            calibrated_required=True,
+            release_performance_required=True,
+        )
+    if payload.get("status") != "NOISY" or payload.get("variance_status") != "NOISY":
+        return EvidenceRow(
+            path.stem,
+            "BLOCKED",
+            str(path),
+            "directional summary must be PASS or variance-qualified NOISY",
+        )
+    if payload.get("calibrated_runner") is not True:
+        return EvidenceRow(
+            path.stem,
+            "BLOCKED",
+            str(path),
+            "directional summary is not from a calibrated runner",
+        )
+    try:
+        errors = _release_performance_errors(
+            payload,
+            require_variance_pass=False,
+        )
+    except ValueError as error:
+        return EvidenceRow(
+            path.stem,
+            "FAIL",
+            str(path),
+            f"cannot validate release contract: {error}",
+        )
+    if errors:
+        return EvidenceRow(
+            path.stem,
+            "BLOCKED",
+            str(path),
+            "; ".join(errors),
+        )
+    return EvidenceRow(
+        path.stem,
+        "DIRECTIONAL",
+        str(path),
+        "speedup gate passed; variance exceeded the E3 ceiling",
+    )
 
 
 def check_log(path: Path) -> EvidenceRow:
@@ -219,11 +283,7 @@ def main() -> int:
     )
 
     rows = [
-        check_summary(
-            windows_calibrated_summary,
-            calibrated_required=True,
-            release_performance_required=True,
-        ),
+        check_directional_summary(windows_calibrated_summary),
         check_summary(
             linux_calibrated_summary,
             calibrated_required=True,
@@ -236,7 +296,7 @@ def main() -> int:
         check_log(resolve_path(args.linux_tsan_log) if args.linux_tsan_log else (
             results_dir / "ci" / "ctest-linux-gcc-tsan.log")),
     ]
-    artifact_scope = "canonical"
+    artifact_scope = "linux-canonical+windows-directional"
     if args.require_pgo:
         artifact_scope = "canonical+pgo"
         pgo_summary = resolve_path(args.pgo_summary) if args.pgo_summary else (

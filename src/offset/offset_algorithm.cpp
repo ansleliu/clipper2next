@@ -101,9 +101,7 @@ auto build_offset_groups(offset_state& state,
         .coordinate_rounding = options.coordinate_rounding,
     };
     const auto can_use_parallel_raw_generation =
-                                                 executor.has_parallel_capability() &&
-                                                 delta_callback == nullptr &&
-                                                 solution_tree == nullptr;
+        executor.has_parallel_capability() && delta_callback == nullptr && solution_tree == nullptr;
     for (const auto& group : groups) {
         if (can_use_parallel_raw_generation) {
             build_offset_group_paths_parallel(
@@ -133,21 +131,20 @@ auto union_offset_solution(Paths64& solution,
 
 }  // namespace
 
-void execute_offset_algorithm_impl(
-    offset_state& state,
-    const std::vector<offset_group>& groups,
-    const double delta,
-    Paths64& solution,
-    PolyTree64* const solution_tree,
-    const offset_algorithm_options& options,
-    const delta_callback_ref delta_callback,
-    const sync_bulk_executor_ref executor) {
+void execute_offset_algorithm_impl(offset_state& state,
+                                   const std::vector<offset_group>& groups,
+                                   const double delta,
+                                   Paths64& solution,
+                                   PolyTree64* const solution_tree,
+                                   const offset_algorithm_options& options,
+                                   const delta_callback_ref delta_callback,
+                                   const sync_bulk_executor_ref executor) {
     const auto rounding_guard = scoped_nearest_rounding{};
     state.reset();
     if (groups.empty() ||
         (options.check_input_coordinate_range && !offset_groups_in_range(groups)) ||
-        !std::isfinite(delta) ||
-        !std::isfinite(options.miter_limit) || !std::isfinite(options.arc_tolerance)) {
+        !std::isfinite(delta) || !std::isfinite(options.miter_limit) ||
+        !std::isfinite(options.arc_tolerance)) {
         return;
     }
 
@@ -158,8 +155,7 @@ void execute_offset_algorithm_impl(
         if (solution_tree == nullptr) { return; }
     } else {
         build_offset_groups(
-            state, groups, delta, solution_tree, options, delta_callback,
-            executor, solution);
+            state, groups, delta, solution_tree, options, delta_callback, executor, solution);
     }
 
     if (solution.empty()) { return; }
@@ -169,8 +165,7 @@ void execute_offset_algorithm_impl(
     }
 
     const auto paths_reversed = check_reverse_orientation(groups);
-    if (can_return_direct_convex_offset(groups, delta, solution_tree, options, paths_reversed) ||
-        can_return_direct_simple_offset(
+    if (can_return_direct_simple_offset(
             groups, solution, delta, solution_tree, options, paths_reversed) ||
         can_return_direct_disjoint_simple_offset(
             groups, solution, delta, solution_tree, options, paths_reversed)) {
@@ -181,30 +176,27 @@ void execute_offset_algorithm_impl(
     union_offset_solution(solution, solution_tree, options, paths_reversed);
 }
 
-auto execute_offset_algorithm_scalar_reference(
-    offset_state& state,
-    const std::vector<offset_group>& groups,
-    const double delta,
-    Paths64& solution,
-    PolyTree64* const solution_tree,
-    const offset_algorithm_options& options,
-    const delta_callback_ref delta_callback) -> void {
+auto execute_offset_algorithm_scalar_reference(offset_state& state,
+                                               const std::vector<offset_group>& groups,
+                                               const double delta,
+                                               Paths64& solution,
+                                               PolyTree64* const solution_tree,
+                                               const offset_algorithm_options& options,
+                                               const delta_callback_ref delta_callback) -> void {
     execute_offset_algorithm_impl(
-        state, groups, delta, solution, solution_tree, options,
-        delta_callback, {});
+        state, groups, delta, solution, solution_tree, options, delta_callback, {});
 }
 
 auto execute_offset_algorithm(offset_state& state,
                               const std::vector<offset_group>& groups,
                               double delta,
                               Paths64& solution,
-                               PolyTree64* solution_tree,
-                               const offset_algorithm_options& options,
-                               delta_callback_ref delta_callback,
-                               const sync_bulk_executor_ref executor) -> void {
+                              PolyTree64* solution_tree,
+                              const offset_algorithm_options& options,
+                              delta_callback_ref delta_callback,
+                              const sync_bulk_executor_ref executor) -> void {
     execute_offset_algorithm_impl(
-        state, groups, delta, solution, solution_tree, options,
-        delta_callback, executor);
+        state, groups, delta, solution, solution_tree, options, delta_callback, executor);
 }
 
 }  // namespace clipper2next::internal

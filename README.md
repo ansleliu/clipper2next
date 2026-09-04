@@ -18,6 +18,10 @@ ranges, flat path sets, and streaming topology output.
 
 The project is tested on Windows with MSVC and on Linux with GCC 13.
 
+Version 5.0.0 intentionally starts a new ABI generation for the complete
+offset-stage statistics contract. The shared library therefore uses SONAME 5;
+4.x consumers must rebuild, and no dual ABI or compatibility shim is shipped.
+
 ## Build
 
 A production build does not require vcpkg or any geometry backend:
@@ -168,34 +172,34 @@ legacy Clipper2. The final external-corpus preflight covered 11 normalized
 profiles and 2,426 cases. Integer coordinates, vertex counts, path direction,
 winding, and topology were compared without coordinate tolerance.
 
-The 4.0.1 release gates below compare the current public API with legacy
+The 5.0.0 release gates below compare the current public API with legacy
 Clipper2 on the same external benchmark profiles. Windows used MSVC 19.44 with
 `/O2 /Ob2 /DNDEBUG`; Linux used GCC 13.1 with `-O3 -DNDEBUG`. Both used Google
 Benchmark 1.9.5, seven repetitions of at least 0.5 s, pairwise process
 isolation, randomized pair order, a 1 s warmup, and a 5% CV ceiling. Every
 required default/unprepared pair must exceed 1.2x; passing the geometric mean
 alone is not sufficient. Linux is the canonical E3 result: all variance and
-speedup gates passed, with a **1.600x** 14-pair geometric mean. Two independent
+speedup gates passed, with a **1.615x** 14-pair geometric mean. Two independent
 Windows runs also passed every speedup gate, but unrelated benchmarks moved
 above the CV ceiling between runs; its **1.758x** result is directional E2,
 not a variance-qualified E3 claim.
 
 | Algorithm family | Windows vs legacy | Linux vs legacy |
 | --- | ---: | ---: |
-| Generic closed overlay | **1.636x** | **1.706x** |
-| Intersection | **1.487x** | **1.563x** |
-| Union | **1.545x** | **1.640x** |
-| Difference | **1.522x** | **1.655x** |
-| XOR | **1.630x** | **1.683x** |
-| RectClip, unprepared | **1.383x** | **1.222x** |
-| Open-line RectClip, unprepared | **4.287x** | **1.775x** |
-| Open-path overlay, unprepared | **1.688x** | **1.525x** |
-| Offset, unprepared | **1.563x** | **1.682x** |
-| Triangulation, unprepared | **2.878x** | **2.362x** |
-| Minkowski, unprepared | **1.465x** | **1.465x** |
-| PolyTree, unprepared | **1.532x** | **1.426x** |
-| ClipTree, unprepared | **1.415x** | **1.472x** |
-| Batch-profile scalar calls, unprepared | **2.016x** | **1.468x** |
+| Generic closed overlay | **1.636x** | **1.746x** |
+| Intersection | **1.487x** | **1.584x** |
+| Union | **1.545x** | **1.669x** |
+| Difference | **1.522x** | **1.694x** |
+| XOR | **1.630x** | **1.715x** |
+| RectClip, unprepared | **1.383x** | **1.247x** |
+| Open-line RectClip, unprepared | **4.287x** | **1.790x** |
+| Open-path overlay, unprepared | **1.688x** | **1.527x** |
+| Offset, unprepared | **1.563x** | **1.770x** |
+| Triangulation, unprepared | **2.878x** | **2.340x** |
+| Minkowski, unprepared | **1.465x** | **1.454x** |
+| PolyTree, unprepared | **1.532x** | **1.434x** |
+| ClipTree, unprepared | **1.415x** | **1.456x** |
+| Batch-profile scalar calls, unprepared | **2.016x** | **1.434x** |
 
 Large offset groups use the injected executor only when the caller can supply
 16 workers and the input has at least 512 paths and 524,288 normalized points.

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(clipper2next VERSION 4.0.1 LANGUAGES CXX)
+project(clipper2next VERSION 5.0.0 LANGUAGES CXX)
 
 if(NOT CMAKE_GENERATOR STREQUAL "Ninja")
   message(FATAL_ERROR

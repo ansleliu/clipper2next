@@ -1,6 +1,6 @@
 {
   "name": "clipper2next-standalone",
-  "version-string": "4.0.1",
+  "version-string": "5.0.0",
   "builtin-baseline": "12159785447291b4069c82a3fe9c2770a393ac7f",
   "dependencies": [],
   "features": {

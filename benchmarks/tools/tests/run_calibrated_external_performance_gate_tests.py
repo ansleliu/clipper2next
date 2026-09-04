@@ -225,6 +225,14 @@ class CalibratedExternalPerformanceGateTests(unittest.TestCase):
                 )
             )
             self.assertEqual(summary["cpu_affinity"], 0)
+            metadata = json.loads(
+                (output_dir / "unit_runner_metadata.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                metadata["runner_placement"]["processor_number"], 0
+            )
 
     def test_allowed_uncalibrated_run_uses_directional_variance_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

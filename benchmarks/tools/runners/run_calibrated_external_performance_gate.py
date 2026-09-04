@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import ctypes
 import json
 import os
 import platform
@@ -44,7 +45,90 @@ def resolve_path(path: str | Path) -> Path:
     return repo_root() / candidate
 
 
-def runner_metadata(benchmark_executable: Path) -> dict:
+class _ProcessorNumber(ctypes.Structure):
+    _fields_ = (
+        ("group", ctypes.c_ushort),
+        ("number", ctypes.c_ubyte),
+        ("reserved", ctypes.c_ubyte),
+    )
+
+
+def constrain_runner_process(cpu_affinity: int | None) -> dict | None:
+    if cpu_affinity is None:
+        return None
+    if os.name != "nt":
+        if not hasattr(os, "sched_getaffinity"):
+            raise OSError("CPU affinity is not supported on this platform")
+        if cpu_affinity not in os.sched_getaffinity(0):
+            raise OSError(f"CPU {cpu_affinity} is outside the runner CPU set")
+        os.sched_setaffinity(0, {cpu_affinity})
+        actual = sorted(os.sched_getaffinity(0))
+        if actual != [cpu_affinity]:
+            raise OSError(f"runner affinity is {actual}, expected [{cpu_affinity}]")
+        return {
+            "affinity_mask": hex(1 << cpu_affinity),
+            "processor_group": 0,
+            "processor_number": cpu_affinity,
+        }
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+    kernel32.GetActiveProcessorGroupCount.argtypes = []
+    kernel32.GetActiveProcessorGroupCount.restype = ctypes.c_ushort
+    kernel32.GetActiveProcessorCount.argtypes = [ctypes.c_ushort]
+    kernel32.GetActiveProcessorCount.restype = ctypes.c_uint
+    kernel32.GetProcessGroupAffinity.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_ushort),
+        ctypes.POINTER(ctypes.c_ushort),
+    ]
+    kernel32.GetProcessGroupAffinity.restype = ctypes.c_int
+    kernel32.GetCurrentProcessorNumberEx.argtypes = [
+        ctypes.POINTER(_ProcessorNumber)
+    ]
+    kernel32.GetCurrentProcessorNumberEx.restype = None
+    kernel32.SetProcessAffinityMask.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+    kernel32.SetProcessAffinityMask.restype = ctypes.c_int
+    kernel32.Sleep.argtypes = [ctypes.c_uint]
+    kernel32.Sleep.restype = None
+
+    process = kernel32.GetCurrentProcess()
+    affinity_mask = 1 << cpu_affinity
+    if not kernel32.SetProcessAffinityMask(process, affinity_mask):
+        raise OSError(ctypes.get_last_error(), "SetProcessAffinityMask failed")
+    group_capacity = int(kernel32.GetActiveProcessorGroupCount())
+    group_count = ctypes.c_ushort(group_capacity)
+    groups = (ctypes.c_ushort * group_capacity)()
+    if not kernel32.GetProcessGroupAffinity(
+        process, ctypes.byref(group_count), groups
+    ):
+        raise OSError(ctypes.get_last_error(), "GetProcessGroupAffinity failed")
+    if group_count.value != 1:
+        raise OSError("calibrated runner must belong to one processor group")
+    current = _ProcessorNumber()
+    for _ in range(64):
+        kernel32.GetCurrentProcessorNumberEx(ctypes.byref(current))
+        if int(current.group) == int(groups[0]) and int(current.number) == cpu_affinity:
+            break
+        kernel32.Sleep(0)
+    else:
+        raise OSError("runner did not migrate to the requested processor")
+    return {
+        "affinity_mask": hex(affinity_mask),
+        "processor_group": int(current.group),
+        "processor_number": int(current.number),
+        "processor_group_active_counts": [
+            int(kernel32.GetActiveProcessorCount(group))
+            for group in range(group_capacity)
+        ],
+    }
+
+
+def runner_metadata(
+    benchmark_executable: Path,
+    runner_placement: dict | None,
+) -> dict:
     return {
         "calibrated_runner": os.environ.get("CLIPPER2NEXT_CALIBRATED_RUNNER") == "1",
         "runner_id": os.environ.get("CLIPPER2NEXT_RUNNER_ID", ""),
@@ -54,6 +138,7 @@ def runner_metadata(benchmark_executable: Path) -> dict:
         "processor": platform.processor(),
         "python": sys.version.split()[0],
         "process_priority": "high" if os.name == "nt" else "default",
+        "runner_placement": runner_placement,
         **collect_evidence_identity(repo_root(), benchmark_executable),
     }
 
@@ -288,7 +373,8 @@ def main() -> int:
     output_dir = resolve_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     benchmark_exe = resolve_path(args.benchmark_exe)
-    metadata = runner_metadata(benchmark_exe)
+    runner_placement = constrain_runner_process(args.cpu_affinity)
+    metadata = runner_metadata(benchmark_exe, runner_placement)
     metadata_path = output_dir / f"{args.prefix}_runner_metadata.json"
     write_json(metadata_path, metadata)
     metadata_identity = sha256_file(metadata_path)

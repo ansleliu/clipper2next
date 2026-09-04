@@ -256,6 +256,28 @@ TEST(Clipper2NextRectClipExecutorTests,
     EXPECT_EQ(result.paths, paths);
 }
 
+TEST(Clipper2NextRectClipExecutorTests, ShortAvx2BoundsMatchTheScalarContract) {
+    if (!next::internal::rectclip_unprepared_avx2_supported()) {
+        GTEST_SKIP() << "AVX2 is unavailable";
+    }
+    const auto points = next::Path64{
+        {-17, 31}, {43, -29}, {7, 5}, {-101, 13},
+        {89, 97}, {3, -73}, {61, 11},
+    };
+    for (auto count = std::size_t{2U}; count <= points.size(); ++count) {
+        SCOPED_TRACE(count);
+        const auto path = next::Path64{points.begin(), points.begin() + count};
+        auto scalar = next::Rect64{};
+        auto avx2 = next::Rect64{};
+        EXPECT_EQ(
+            next::internal::rectclip_unprepared_path_bounds_scalar(
+                path, true, scalar),
+            next::internal::rectclip_unprepared_path_bounds_avx2(
+                path, true, avx2));
+        EXPECT_EQ(avx2, scalar);
+    }
+}
+
 TEST(Clipper2NextRectClipExecutorTests, PathBoundsSummaryTracksCombinedBoundsAndMinimumSizes) {
     const next::Paths64 paths{
         next::Path64{{0, 0}, {10, 0}, {10, 10}, {0, 10}},

@@ -306,6 +306,28 @@ clipper2next_target_msvc_external_pgo(clipper2next_tests CORRECTNESS)
 
 gtest_discover_tests(clipper2next_tests)
 
+add_executable(
+  clipper2next_offset_cleanup_failure_contract
+  api/offset_cleanup_failure_contract.cpp
+)
+target_link_libraries(
+  clipper2next_offset_cleanup_failure_contract
+  PRIVATE clipper2next_internal_test_support
+)
+target_compile_features(
+  clipper2next_offset_cleanup_failure_contract PRIVATE cxx_std_23
+)
+target_compile_definitions(
+  clipper2next_offset_cleanup_failure_contract
+  PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY
+)
+clipper2next_target_warnings(clipper2next_offset_cleanup_failure_contract)
+clipper2next_target_sanitizers(clipper2next_offset_cleanup_failure_contract)
+add_test(
+  NAME clipper2next_offset_cleanup_failure_contract
+  COMMAND clipper2next_offset_cleanup_failure_contract
+)
+
 if(WIN32)
   find_program(clipper2next_export_inspector NAMES dumpbin REQUIRED)
 else()

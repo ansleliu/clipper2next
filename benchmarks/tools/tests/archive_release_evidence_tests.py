@@ -33,6 +33,15 @@ def release_performance_summary() -> dict:
     }
 
 
+def noisy_directional_summary() -> dict:
+    payload = release_performance_summary()
+    payload.update(
+        status="NOISY",
+        variance_status="NOISY",
+    )
+    return payload
+
+
 def write_required_evidence(root: Path) -> None:
     (root / "ci").mkdir()
     (
@@ -90,6 +99,19 @@ class ReleaseEvidenceArchiveTests(unittest.TestCase):
 
         self.assertEqual("PASS", evidence.overall_status(rows))
         self.assertTrue(all(row.status == "PASS" for row in rows))
+
+    def test_accepts_noisy_windows_as_explicit_directional_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            summary = Path(temp_dir) / "summary.json"
+            summary.write_text(
+                json.dumps(noisy_directional_summary()),
+                encoding="utf-8",
+            )
+
+            row = evidence.check_directional_summary(summary)
+
+        self.assertEqual("DIRECTIONAL", row.status)
+        self.assertIn("variance exceeded", row.detail)
 
     def test_rejects_uncalibrated_pass_summary_for_release_gate(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -156,7 +178,10 @@ class ReleaseEvidenceArchiveTests(unittest.TestCase):
             )
 
         self.assertEqual(0, status)
-        self.assertEqual("canonical", report["artifact_scope"])
+        self.assertEqual(
+            "linux-canonical+windows-directional",
+            report["artifact_scope"],
+        )
         self.assertFalse(any("pgo" in row["name"] for row in report["rows"]))
 
     def test_canonical_scope_blocks_missing_linux_performance_summary(self) -> None:

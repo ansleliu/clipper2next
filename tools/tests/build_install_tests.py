@@ -35,7 +35,7 @@ class BuildInstallContractTests(unittest.TestCase):
         identity = module.read_release_identity(ROOT)
 
         self.assertEqual("clipper2next", identity.package_name)
-        self.assertEqual("4.0.1", identity.version)
+        self.assertEqual("5.0.0", identity.version)
         self.assertEqual(
             "https://github.com/ansleliu/clipper2next",
             identity.public_repository,
@@ -48,11 +48,11 @@ class BuildInstallContractTests(unittest.TestCase):
         identity = module.read_release_identity(ROOT)
 
         self.assertEqual(
-            "clipper2next/4.0.1@company/debug",
+            "clipper2next/5.0.0@company/debug",
             module.internal_reference(identity, "Debug", "company"),
         )
         self.assertEqual(
-            "clipper2next/4.0.1@company/release",
+            "clipper2next/5.0.0@company/release",
             module.internal_reference(identity, "Release", "company"),
         )
         with self.assertRaises(ValueError):
@@ -66,7 +66,7 @@ class BuildInstallContractTests(unittest.TestCase):
 
         reference = module.center_reference(identity)
 
-        self.assertEqual("clipper2next/4.0.1", reference)
+        self.assertEqual("clipper2next/5.0.0", reference)
         self.assertNotIn("@", reference)
 
     def test_center_source_rejects_private_or_unverified_archives(self) -> None:
@@ -97,7 +97,7 @@ class BuildInstallContractTests(unittest.TestCase):
                 homepage="https://github.com/ansleliu/clipper2next",
                 archive_url=(
                     "https://github.com/ansleliu/clipper2next/archive/refs/"
-                    "tags/v4.0.1.tar.gz"
+                    "tags/v5.0.0.tar.gz"
                 ),
                 archive_sha256="a" * 64,
             )
@@ -122,7 +122,7 @@ class BuildInstallContractTests(unittest.TestCase):
                 if path.is_file()
             )
             self.assertIn('name = "clipper2next"', combined)
-            self.assertIn('"4.0.1"', combined)
+            self.assertIn('"5.0.0"', combined)
             self.assertIn("clipper2next::geotypes", combined)
             self.assertIn("clipper2next::clipper2next", combined)
             test_recipe = (
@@ -212,7 +212,7 @@ class BuildInstallContractTests(unittest.TestCase):
         self.assertIn("--channel=release", internal)
         self.assertIn("--test-folder=" + str((ROOT / "packaging" / "test_package").resolve()), internal)
         self.assertNotIn("testing", " ".join(internal))
-        self.assertIn("--version=4.0.1", center)
+        self.assertIn("--version=5.0.0", center)
         self.assertFalse(any(value.startswith("--user") for value in center))
         self.assertFalse(any(value.startswith("--channel") for value in center))
         self.assertIn("--test-folder=" + str(Path("C:/stage/all/test_package").resolve()), center)
@@ -234,7 +234,7 @@ class BuildInstallContractTests(unittest.TestCase):
             [
                 "conan",
                 "upload",
-                "clipper2next/4.0.1@company/release",
+                "clipper2next/5.0.0@company/release",
                 "--remote=private-repository",
                 "--check",
                 "--force",
@@ -310,7 +310,7 @@ class BuildInstallContractTests(unittest.TestCase):
 
         self.assertEqual(
             "https://github.com/ansleliu/clipper2next/archive/refs/tags/"
-            "v4.0.1.tar.gz",
+            "v5.0.0.tar.gz",
             module.default_center_archive_url(identity),
         )
 
@@ -426,7 +426,7 @@ class BuildInstallContractTests(unittest.TestCase):
         self.assertNotIn("conan upload", internal.stdout)
         self.assertEqual(0, center.returncode, center.stdout + center.stderr)
         self.assertIn("Conan Center stage", center.stdout)
-        self.assertIn("--version=4.0.1", center.stdout)
+        self.assertIn("--version=5.0.0", center.stdout)
         self.assertNotIn("--user=", center.stdout)
         self.assertNotIn("--channel=", center.stdout)
 
