@@ -172,7 +172,7 @@ legacy Clipper2. The final external-corpus preflight covered 11 normalized
 profiles and 2,426 cases. Integer coordinates, vertex counts, path direction,
 winding, and topology were compared without coordinate tolerance.
 
-The 5.0.0 release gates below compare the current public API with legacy
+The 5.0.1 release gates below compare the current public API with legacy
 Clipper2 on the same external benchmark profiles. Windows used MSVC 19.44 with
 `/O2 /Ob2 /DNDEBUG`; Linux used GCC 13.1 with `-O3 -DNDEBUG`. Both used Google
 Benchmark 1.9.5, seven repetitions of at least 0.5 s, pairwise process

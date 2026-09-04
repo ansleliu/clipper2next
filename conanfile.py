@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from conan import ConanFile
 from conan.tools.build import check_min_cppstd
@@ -6,9 +7,31 @@ from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
 from conan.tools.files import copy, rmdir
 
 
+_EXPORTED_TEXT_SUFFIXES = {
+    ".cmake",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".in",
+    ".map",
+    ".md",
+    ".txt",
+}
+
+
+def normalize_exported_text(root: str) -> None:
+    for path in Path(root).rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in _EXPORTED_TEXT_SUFFIXES:
+            continue
+        content = path.read_bytes()
+        normalized = content.replace(b"\r\n", b"\n")
+        if normalized != content:
+            path.write_bytes(normalized)
+
+
 class Clipper2NextConan(ConanFile):
     name = "clipper2next"
-    version = "5.0.0"
+    version = "5.0.1"
     package_type = "shared-library"
     license = "BSL-1.0"
     description = "Standalone C++23 integer polygon geometry library"
@@ -25,6 +48,9 @@ class Clipper2NextConan(ConanFile):
         "LICENSE_1_0.txt",
         "NOTICE.md",
     )
+
+    def export_sources(self):
+        normalize_exported_text(self.export_sources_folder)
 
     def layout(self):
         cmake_layout(self, generator="Ninja")

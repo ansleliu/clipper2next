@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from benchmarks.tools.common.evidence_identity import (
     candidate_source_identity,
     git_repository_identity,
+    protocol_identity,
+    protocol_identity_at,
+    runtime_library_identity,
 )
 
 
@@ -24,6 +28,54 @@ def run_git(root: Path, *arguments: str) -> str:
 
 
 class EvidenceIdentityTests(unittest.TestCase):
+    def test_protocol_identity_matches_the_committed_file_set(self) -> None:
+        names = (
+            "benchmarks/tools/runners/run_calibrated_external_performance_gate.py",
+            "benchmarks/tools/common/evidence_identity.py",
+            "benchmarks/tools/common/external_core_measurement.py",
+            "benchmarks/tools/common/release_gate_policy.py",
+            "benchmarks/tools/gates/external_benchmark_variance_gate.py",
+            "benchmarks/tools/gates/external_legacy_speedup_gate.py",
+            "benchmarks/oracle/external_corpus_benchmark.cpp",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init")
+            run_git(root, "config", "user.name", "Evidence Test")
+            run_git(root, "config", "user.email", "evidence@example.invalid")
+            for ordinal, name in enumerate(reversed(names)):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"protocol-{ordinal}\n", encoding="utf-8")
+            run_git(root, "add", ".")
+            run_git(root, "commit", "-m", "protocol")
+
+            self.assertEqual(
+                protocol_identity(root),
+                protocol_identity_at(root, "HEAD"),
+            )
+
+    @unittest.skipUnless(os.name == "nt", "Windows DLL discovery contract")
+    def test_runtime_identity_archives_binary_without_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "benchmark.exe"
+            library = root / "clipper2next.dll"
+            executable.write_bytes(b"benchmark")
+            library.write_bytes(b"runtime")
+
+            identity = runtime_library_identity(
+                executable, root / "evidence" / "artifacts"
+            )
+
+            self.assertEqual("shared", identity["linkage"])
+            self.assertEqual("clipper2next.dll", identity["soname"])
+            self.assertEqual("clipper2next.dll", identity["basename"])
+            self.assertEqual(
+                "artifacts/clipper2next.dll", identity["artifact_id"]
+            )
+            self.assertFalse(any("path" in key.lower() for key in identity))
+
     def test_git_filtered_source_identity_is_independent_of_checkout_eol(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

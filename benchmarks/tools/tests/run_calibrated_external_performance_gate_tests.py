@@ -379,6 +379,9 @@ class CalibratedExternalPerformanceGateTests(unittest.TestCase):
                 benchmark_payload["context"]["evidence_identity"],
                 metadata["evidence_identity"],
             )
+            for group in benchmark_payload["clipper2next_measurement"]["groups"]:
+                self.assertNotIn("\\", group["json"])
+                self.assertNotIn("\\", group["log"])
             for raw in (output_dir / "unit_external_benchmark_groups").glob(
                 "*.json"
             ):

@@ -23,9 +23,16 @@ def load_records(path: Path, time_field: str = "real_time") -> dict[str, dict[st
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
 
+    return load_records_from_payload(payload, time_field=time_field)
+
+
+def load_records_from_payload(
+    payload: dict, time_field: str = "real_time"
+) -> dict[str, dict[str, float | str]]:
+
     benchmarks = payload.get("benchmarks")
     if not isinstance(benchmarks, list):
-        raise ValueError(f"benchmark JSON has no benchmark list: {path}")
+        raise ValueError("benchmark JSON has no benchmark list")
 
     records: dict[str, dict[str, float | str]] = {}
     means: dict[str, float] = {}

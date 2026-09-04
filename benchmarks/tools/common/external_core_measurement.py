@@ -125,8 +125,8 @@ def collect_pairwise_external_core(
             "name": group_name,
             "benchmarks": list(expected_benchmarks),
             "filter": group_filter,
-            "json": str(group_json.relative_to(output_dir)),
-            "log": str(group_log.relative_to(output_dir)),
+            "json": group_json.relative_to(output_dir).as_posix(),
+            "log": group_log.relative_to(output_dir).as_posix(),
         })
 
     merged_payload = {

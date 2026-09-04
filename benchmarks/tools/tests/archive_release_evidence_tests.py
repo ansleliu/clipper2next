@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -8,270 +9,242 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
-TOOLS_DIR = REPO_ROOT / "benchmarks" / "tools"
 
+from benchmarks.tools.common.evidence_identity import (
+    candidate_source_identity_at,
+    release_identity,
+    sha256_file,
+)
 from benchmarks.tools.evidence import archive_release_evidence as evidence
 
+TEST_PROTOCOL_IDENTITY = "sha256:" + "1" * 64
 
-def release_performance_summary() -> dict:
-    contract = evidence.load_contract()
+
+def git(*arguments: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(REPO_ROOT), *arguments],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def release_repository() -> dict:
     return {
-        "schema_version": 1,
-        "status": "PASS",
-        "evidence_mode": "release",
-        "calibrated_runner": True,
-        "runner_id": "unit-test-runner",
-        "contract_sha256": contract.sha256,
-        "repetitions": contract.performance["release_repetitions"],
-        "min_time_seconds": contract.performance["min_time_seconds"],
-        "max_cv_percent": contract.performance["release_max_cv_percent"],
-        "min_pair_speedup": contract.performance["min_pair_speedup"],
-        "min_geomean_speedup": contract.performance["min_geomean_speedup"],
-        "speedup_mode": "default-unprepared",
-        "variance_status": "PASS",
-        "speedup_status": "PASS",
+        "head_commit": git("rev-parse", "HEAD"),
+        "head_tree": git("rev-parse", "HEAD^{tree}"),
+        "dirty": False,
+        "worktree_status_dirty": False,
+        "canonical_source_identity": candidate_source_identity_at(
+            REPO_ROOT, "HEAD"
+        ),
+        "canonical_diff_identity": "sha256:" + "0" * 64,
     }
 
 
-def noisy_directional_summary() -> dict:
-    payload = release_performance_summary()
-    payload.update(
-        status="NOISY",
-        variance_status="NOISY",
-    )
-    return payload
-
-
-def write_required_evidence(root: Path) -> None:
-    (root / "ci").mkdir()
-    (
-        root / "release_calibrated_external_calibrated_external_summary.json"
-    ).write_text(
-        json.dumps(release_performance_summary()),
+def write_valid_test_manifest(root: Path) -> Path:
+    artifact = root / "ci" / "artifacts" / "asan" / "clipper2next_tests"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"tested-binary")
+    log = root / "ci" / "ctest-linux-gcc-asan-ubsan.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(
+        "100% tests passed, 0 tests failed out of 490\n",
         encoding="utf-8",
     )
-    (
-        root / "release_linux_calibrated_external_calibrated_external_summary.json"
-    ).write_text(
-        json.dumps(release_performance_summary()),
+    repository = release_repository()
+    manifest = root / "ci" / "ctest-linux-gcc-asan-ubsan.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "name": "ctest-linux-gcc-asan-ubsan",
+                "status": "PASS",
+                "exit_code": 0,
+                "tests_total": 490,
+                "tests_failed": 0,
+                "sanitizer_failures": 0,
+                "log_artifact": "ctest-linux-gcc-asan-ubsan.log",
+                "log_sha256": sha256_file(log),
+                "candidate_source_identity": repository[
+                    "canonical_source_identity"
+                ],
+                "compiler_identity": "GCC-13.1.0",
+                "build_configuration": "ASan-UBSan",
+                "cmake_cache_identity": "sha256:" + "2" * 64,
+                "git_repository_identity": repository,
+                "release_identity": release_identity(repository),
+                "protocol_identity": TEST_PROTOCOL_IDENTITY,
+                "artifacts": [
+                    {
+                        "artifact_id": "artifacts/asan/clipper2next_tests",
+                        "sha256": sha256_file(artifact),
+                    }
+                ],
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
-    for log_name in (
-        "ctest-linux-gcc-asan-ubsan.log",
-        "ctest-linux-gcc-fuzz-smoke.log",
-        "ctest-linux-gcc-tsan.log",
-    ):
-        (root / "ci" / log_name).write_text("ok\n", encoding="utf-8")
+    return manifest
 
 
 class ReleaseEvidenceArchiveTests(unittest.TestCase):
-    def test_blocks_missing_release_evidence(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            rows = [
-                evidence.check_summary(root / "missing.json", calibrated_required=True),
-                evidence.check_log(root / "missing.log"),
-            ]
-
-        self.assertEqual("BLOCKED", evidence.overall_status(rows))
-        self.assertEqual("BLOCKED", rows[0].status)
-        self.assertEqual("BLOCKED", rows[1].status)
-
-    def test_accepts_calibrated_summaries_and_nonempty_logs(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            summary = root / "summary.json"
-            summary.write_text(
-                json.dumps(release_performance_summary()),
-                encoding="utf-8",
+    def test_derived_comparison_allows_only_float_roundoff(self) -> None:
+        reference = {"rows": [{"speedup": 1.6000000000001}], "status": "PASS"}
+        self.assertTrue(
+            evidence._equivalent_derived(
+                reference,
+                {"rows": [{"speedup": 1.6000000000002}], "status": "PASS"},
             )
-            log = root / "run.log"
-            log.write_text("ok\n", encoding="utf-8")
-
-            rows = [
-                evidence.check_summary(
-                    summary,
-                    calibrated_required=True,
-                    release_performance_required=True,
-                ),
-                evidence.check_log(log),
-            ]
-
-        self.assertEqual("PASS", evidence.overall_status(rows))
-        self.assertTrue(all(row.status == "PASS" for row in rows))
-
-    def test_accepts_noisy_windows_as_explicit_directional_evidence(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            summary = Path(temp_dir) / "summary.json"
-            summary.write_text(
-                json.dumps(noisy_directional_summary()),
-                encoding="utf-8",
-            )
-
-            row = evidence.check_directional_summary(summary)
-
-        self.assertEqual("DIRECTIONAL", row.status)
-        self.assertIn("variance exceeded", row.detail)
-
-    def test_rejects_uncalibrated_pass_summary_for_release_gate(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            summary = root / "summary.json"
-            summary.write_text(
-                json.dumps({"status": "PASS", "calibrated_runner": False}),
-                encoding="utf-8",
-            )
-
-            row = evidence.check_summary(summary, calibrated_required=True)
-
-        self.assertEqual("BLOCKED", row.status)
-        self.assertIn("not from a calibrated runner", row.detail)
-
-    def test_rejects_directional_summary_for_release_archive(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            summary = Path(temp_dir) / "summary.json"
-            payload = release_performance_summary()
-            payload["evidence_mode"] = "directional"
-            summary.write_text(json.dumps(payload), encoding="utf-8")
-
-            row = evidence.check_summary(
-                summary,
-                calibrated_required=True,
-                release_performance_required=True,
-            )
-
-        self.assertEqual("BLOCKED", row.status)
-        self.assertIn("evidence_mode", row.detail)
-
-    def test_rejects_release_summary_with_weakened_contract_threshold(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            summary = Path(temp_dir) / "summary.json"
-            payload = release_performance_summary()
-            payload["max_cv_percent"] = 15.0
-            summary.write_text(json.dumps(payload), encoding="utf-8")
-
-            row = evidence.check_summary(
-                summary,
-                calibrated_required=True,
-                release_performance_required=True,
-            )
-
-        self.assertEqual("BLOCKED", row.status)
-        self.assertIn("max_cv_percent", row.detail)
-
-    def test_default_canonical_scope_does_not_require_pgo_summary(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            write_required_evidence(root)
-
-            with mock.patch.object(
-                sys,
-                "argv",
-                ["archive_release_evidence.py", "--results-dir", str(root)],
-            ):
-                status = evidence.main()
-
-            report = json.loads(
-                (root / "release_release_evidence_archive.json").read_text(
-                    encoding="utf-8"
-                )
-            )
-
-        self.assertEqual(0, status)
-        self.assertEqual(
-            "linux-canonical+windows-directional",
-            report["artifact_scope"],
         )
-        self.assertFalse(any("pgo" in row["name"] for row in report["rows"]))
-
-    def test_canonical_scope_blocks_missing_linux_performance_summary(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            write_required_evidence(root)
-            (
-                root / "release_linux_calibrated_external_calibrated_external_summary.json"
-            ).unlink()
-
-            with mock.patch.object(
-                sys,
-                "argv",
-                ["archive_release_evidence.py", "--results-dir", str(root)],
-            ):
-                status = evidence.main()
-
-        self.assertEqual(2, status)
-
-    def test_pgo_artifact_scope_blocks_missing_pgo_summary(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            write_required_evidence(root)
-
-            with mock.patch.object(
-                sys,
-                "argv",
-                [
-                    "archive_release_evidence.py",
-                    "--results-dir",
-                    str(root),
-                    "--require-pgo",
-                ],
-            ):
-                status = evidence.main()
-
-        self.assertEqual(2, status)
-
-    def test_pgo_artifact_scope_requires_full_release_performance_contract(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            write_required_evidence(root)
-            (root / "release_msvc_pgo_msvc_pgo_summary.json").write_text(
-                json.dumps({"status": "PASS", "calibrated_runner": True}),
-                encoding="utf-8",
+        self.assertFalse(
+            evidence._equivalent_derived(
+                reference,
+                {"rows": [{"speedup": 1.6001}], "status": "PASS"},
             )
-
-            with mock.patch.object(
-                sys,
-                "argv",
-                [
-                    "archive_release_evidence.py",
-                    "--results-dir",
-                    str(root),
-                    "--require-pgo",
-                ],
-            ):
-                status = evidence.main()
-
-        self.assertEqual(2, status)
-
-    def test_pgo_artifact_scope_accepts_matching_release_performance_contract(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            write_required_evidence(root)
-            (root / "release_msvc_pgo_msvc_pgo_summary.json").write_text(
-                json.dumps(release_performance_summary()),
-                encoding="utf-8",
+        )
+        self.assertFalse(
+            evidence._equivalent_derived(
+                reference,
+                {"rows": [{"speedup": 1.6000000000001}], "status": "NOISY"},
             )
+        )
+
+    def test_accepts_structured_zero_failure_test_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = write_valid_test_manifest(root)
 
             with mock.patch.object(
-                sys,
-                "argv",
-                [
-                    "archive_release_evidence.py",
-                    "--results-dir",
-                    str(root),
-                    "--require-pgo",
-                ],
+                evidence,
+                "_aggregate_ref_paths",
+                return_value=TEST_PROTOCOL_IDENTITY,
             ):
-                status = evidence.main()
-
-            report = json.loads(
-                (root / "release_release_evidence_archive.json").read_text(
-                    encoding="utf-8"
+                row, artifacts = evidence.check_test_manifest(
+                    root, manifest, release_ref="HEAD"
                 )
+
+            self.assertEqual("PASS", row.status)
+            self.assertEqual(3, len(artifacts))
+            self.assertRegex(row.release_identity or "", r"^sha256:[0-9a-f]{64}$")
+
+    def test_rejects_nonempty_log_without_ctest_success_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = write_valid_test_manifest(root)
+            log = root / "ci" / "ctest-linux-gcc-asan-ubsan.log"
+            log.write_text("ok\n", encoding="utf-8")
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["log_sha256"] = sha256_file(log)
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+            with mock.patch.object(
+                evidence,
+                "_aggregate_ref_paths",
+                return_value=TEST_PROTOCOL_IDENTITY,
+            ):
+                row, _ = evidence.check_test_manifest(
+                    root, manifest, release_ref="HEAD"
+                )
+
+            self.assertEqual("BLOCKED", row.status)
+            self.assertIn("zero-failure summary", row.detail)
+
+    def test_rejects_test_manifest_without_build_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = write_valid_test_manifest(root)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            del payload["compiler_identity"]
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+            with mock.patch.object(
+                evidence,
+                "_aggregate_ref_paths",
+                return_value=TEST_PROTOCOL_IDENTITY,
+            ):
+                row, _ = evidence.check_test_manifest(
+                    root, manifest, release_ref="HEAD"
+                )
+
+            self.assertEqual("BLOCKED", row.status)
+            self.assertIn("compiler identity", row.detail)
+
+    def test_rejects_sanitizer_failure_even_with_green_ctest_footer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = write_valid_test_manifest(root)
+            log = root / "ci" / "ctest-linux-gcc-asan-ubsan.log"
+            log.write_text(
+                "ERROR: AddressSanitizer\n"
+                "100% tests passed, 0 tests failed out of 490\n",
+                encoding="utf-8",
+            )
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["log_sha256"] = sha256_file(log)
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+            with mock.patch.object(
+                evidence,
+                "_aggregate_ref_paths",
+                return_value=TEST_PROTOCOL_IDENTITY,
+            ):
+                row, _ = evidence.check_test_manifest(
+                    root, manifest, release_ref="HEAD"
+                )
+
+            self.assertEqual("BLOCKED", row.status)
+            self.assertIn("sanitizer failure", row.detail)
+
+    def test_rejects_private_absolute_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = write_valid_test_manifest(root)
+            log = root / "ci" / "ctest-linux-gcc-asan-ubsan.log"
+            log.write_text(
+                "D:\\private\\build\\tests.exe\n"
+                "100% tests passed, 0 tests failed out of 490\n",
+                encoding="utf-8",
+            )
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            payload["log_sha256"] = sha256_file(log)
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+
+            with mock.patch.object(
+                evidence,
+                "_aggregate_ref_paths",
+                return_value=TEST_PROTOCOL_IDENTITY,
+            ):
+                row, _ = evidence.check_test_manifest(
+                    root, manifest, release_ref="HEAD"
+                )
+
+            self.assertEqual("BLOCKED", row.status)
+            self.assertIn("private absolute path", row.detail)
+
+    def test_rejects_handwritten_pass_summary_without_identity_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            summary = root / "summary.json"
+            summary.write_text(
+                json.dumps(
+                    {
+                        "status": "PASS",
+                        "evidence_mode": "release",
+                        "calibrated_runner": True,
+                        "runner_id": "manual",
+                    }
+                ),
+                encoding="utf-8",
             )
 
-        self.assertEqual(0, status)
-        self.assertEqual("canonical+pgo", report["artifact_scope"])
+            row, _ = evidence.check_performance_bundle(
+                root, summary, directional=False, release_ref="HEAD"
+            )
+
+            self.assertEqual("BLOCKED", row.status)
+            self.assertIn("expected", row.detail)
 
 
 if __name__ == "__main__":

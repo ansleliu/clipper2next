@@ -322,6 +322,16 @@ target_compile_definitions(
   PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY
 )
 clipper2next_target_warnings(clipper2next_offset_cleanup_failure_contract)
+# This contract intentionally replaces the complete global new/delete family
+# with malloc/free-backed fault injection. GCC 14 diagnoses that deliberate
+# replacement as a mismatched allocation pair after inlining standard-library
+# callers; keep the exception local to this test target.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_compile_options(
+    clipper2next_offset_cleanup_failure_contract
+    PRIVATE -Wno-mismatched-new-delete
+  )
+endif()
 clipper2next_target_sanitizers(clipper2next_offset_cleanup_failure_contract)
 add_test(
   NAME clipper2next_offset_cleanup_failure_contract

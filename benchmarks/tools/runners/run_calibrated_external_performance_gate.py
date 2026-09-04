@@ -128,6 +128,7 @@ def constrain_runner_process(cpu_affinity: int | None) -> dict | None:
 def runner_metadata(
     benchmark_executable: Path,
     runner_placement: dict | None,
+    output_dir: Path,
 ) -> dict:
     return {
         "calibrated_runner": os.environ.get("CLIPPER2NEXT_CALIBRATED_RUNNER") == "1",
@@ -139,7 +140,9 @@ def runner_metadata(
         "python": sys.version.split()[0],
         "process_priority": "high" if os.name == "nt" else "default",
         "runner_placement": runner_placement,
-        **collect_evidence_identity(repo_root(), benchmark_executable),
+        **collect_evidence_identity(
+            repo_root(), benchmark_executable, output_dir / "artifacts"
+        ),
     }
 
 
@@ -299,7 +302,38 @@ def bind_evidence_identity(path: Path, identity: str) -> None:
     if not isinstance(context, dict):
         raise ValueError(f"benchmark context is not an object: {path}")
     context["evidence_identity"] = identity
+    if "executable" in context:
+        context["executable"] = Path(str(context["executable"])).name
     write_json(path, payload)
+
+
+def redact_local_paths(path: Path, replacements: list[tuple[str, str]]) -> None:
+    if not path.is_file() or path.suffix not in {".json", ".log", ".md"}:
+        return
+    def redact(value):
+        if isinstance(value, dict):
+            return {key: redact(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        if not isinstance(value, str):
+            return value
+        for source, replacement in ordered:
+            if source:
+                value = value.replace(source, replacement)
+                value = value.replace(source.replace("\\", "/"), replacement)
+        return value
+
+    ordered = sorted(replacements, key=lambda value: len(value[0]), reverse=True)
+    if path.suffix == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        write_json(path, redact(payload))
+        return
+    content = path.read_text(encoding="utf-8", errors="replace")
+    for source, replacement in ordered:
+        if source:
+            content = content.replace(source, replacement)
+            content = content.replace(source.replace("\\", "/"), replacement)
+    path.write_text(content, encoding="utf-8", newline="\n")
 
 
 def bind_derived_identity(path: Path, identity: str) -> None:
@@ -374,7 +408,7 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     benchmark_exe = resolve_path(args.benchmark_exe)
     runner_placement = constrain_runner_process(args.cpu_affinity)
-    metadata = runner_metadata(benchmark_exe, runner_placement)
+    metadata = runner_metadata(benchmark_exe, runner_placement, output_dir)
     metadata_path = output_dir / f"{args.prefix}_runner_metadata.json"
     write_json(metadata_path, metadata)
     metadata_identity = sha256_file(metadata_path)
@@ -388,6 +422,7 @@ def main() -> int:
         "runner_metadata": metadata_path.name,
         "runner_metadata_identity": metadata_identity,
         "evidence_identity": metadata["evidence_identity"],
+        "release_identity": metadata["release_identity"],
         "repetitions": args.repetitions,
         "min_time_seconds": args.min_time,
         "min_warmup_time_seconds": CALIBRATED_EXTERNAL_MIN_WARMUP_TIME_SECONDS,
@@ -471,11 +506,20 @@ def main() -> int:
         print("status=FAIL")
         return 1
 
-    bind_evidence_identity(
-        benchmark_json, metadata["evidence_identity"])
     for raw_path in benchmark_group_dir.glob("*.json"):
         bind_evidence_identity(
             raw_path, metadata["evidence_identity"])
+    benchmark_payload = json.loads(benchmark_json.read_text(encoding="utf-8"))
+    group_contexts = [
+        json.loads(path.read_text(encoding="utf-8")).get("context", {})
+        for path in sorted(benchmark_group_dir.glob("*.json"))
+    ]
+    benchmark_payload["context"] = group_contexts[0] if group_contexts else {}
+    measurement = benchmark_payload.get("clipper2next_measurement")
+    if not isinstance(measurement, dict):
+        raise ValueError("combined benchmark measurement metadata is missing")
+    measurement["group_contexts"] = group_contexts
+    write_json(benchmark_json, benchmark_payload)
 
     variance_md = output_dir / f"{args.prefix}_external_variance_gate.md"
     variance_json = output_dir / f"{args.prefix}_external_variance_gate.json"
@@ -565,6 +609,15 @@ def main() -> int:
             **speedup_artifacts,
         },
     )
+
+    replacements = [
+        (str(benchmark_exe.resolve()), "${BENCHMARK}"),
+        (str(output_dir.resolve()), "${EVIDENCE}"),
+        (str(repo_root().resolve()), "${REPOSITORY}"),
+        (str(Path(sys.executable).resolve()), "${PYTHON}"),
+    ]
+    for artifact in output_dir.rglob("*"):
+        redact_local_paths(artifact, replacements)
 
     print(f"summary={output_dir / f'{args.prefix}_calibrated_external_summary.md'}")
     print(f"status={status}")

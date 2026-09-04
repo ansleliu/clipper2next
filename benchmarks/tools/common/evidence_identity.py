@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -162,6 +163,20 @@ def candidate_source_identity(root: Path) -> str | None:
     return _aggregate(root, paths) if paths else None
 
 
+def candidate_source_identity_at(root: Path, reference: str) -> str:
+    completed = _git(root, "ls-tree", "-r", "-z", reference)
+    blobs: dict[str, str | None] = {}
+    for record in completed.stdout.split(b"\0"):
+        if not record:
+            continue
+        metadata, relative_bytes = record.split(b"\t", 1)
+        _, kind, blob = metadata.split(b" ", 2)
+        relative = relative_bytes.decode("utf-8")
+        if kind == b"blob" and _is_candidate_relative_path(relative):
+            blobs[relative] = blob.decode("ascii")
+    return _aggregate_blob_map(blobs)
+
+
 def corpus_identity() -> str | None:
     value = os.environ.get("CLIPPER2NEXT_GEOMETRY_CORPUS_ROOT", "").strip()
     if not value:
@@ -183,7 +198,36 @@ def protocol_identity(root: Path) -> str | None:
         "benchmarks/oracle/external_corpus_benchmark.cpp",
     )
     paths = [root / name for name in names]
-    return _aggregate(root, paths) if all(path.is_file() for path in paths) else None
+    if not all(path.is_file() for path in paths):
+        return None
+    digest = hashlib.sha256()
+    for name, path in sorted(zip(names, paths, strict=True)):
+        content = path.read_bytes().replace(b"\r\n", b"\n")
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(content).digest())
+    return f"sha256:{digest.hexdigest()}"
+
+
+def protocol_identity_at(root: Path, reference: str) -> str:
+    names = (
+        "benchmarks/tools/runners/run_calibrated_external_performance_gate.py",
+        "benchmarks/tools/common/evidence_identity.py",
+        "benchmarks/tools/common/external_core_measurement.py",
+        "benchmarks/tools/common/release_gate_policy.py",
+        "benchmarks/tools/gates/external_benchmark_variance_gate.py",
+        "benchmarks/tools/gates/external_legacy_speedup_gate.py",
+        "benchmarks/oracle/external_corpus_benchmark.cpp",
+    )
+    digest = hashlib.sha256()
+    for name in sorted(names):
+        content = _git(root, "show", f"{reference}:{name}").stdout.replace(
+            b"\r\n", b"\n"
+        )
+        digest.update(name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(content).digest())
+    return f"sha256:{digest.hexdigest()}"
 
 
 def _cmake_cache(benchmark_executable: Path) -> Path | None:
@@ -223,23 +267,19 @@ def compiler_identity(benchmark_executable: Path) -> dict | None:
     return {
         "cmake_cache_identity": sha256_file(cache),
         "build_type": values.get("CMAKE_BUILD_TYPE", ""),
-        "cxx_compiler": compiler,
+        "cxx_compiler": Path(compiler).name if compiler else "",
         "cxx_compiler_version": version,
         "cxx_flags": values.get("CMAKE_CXX_FLAGS", ""),
         "cxx_flags_release": values.get("CMAKE_CXX_FLAGS_RELEASE", ""),
     }
 
 
-def runtime_library_identity(benchmark_executable: Path) -> dict:
+def _runtime_library(benchmark_executable: Path) -> tuple[str, Path] | None:
     if os.name == "nt":
         library = benchmark_executable.parent / "clipper2next.dll"
         if library.is_file():
-            return {
-                "linkage": "shared",
-                "path": str(library.resolve()),
-                "sha256": sha256_file(library),
-            }
-        return {"linkage": "standalone"}
+            return library.name, library.resolve()
+        return None
 
     try:
         completed = subprocess.run(
@@ -249,24 +289,57 @@ def runtime_library_identity(benchmark_executable: Path) -> dict:
             text=True,
         )
     except OSError:
-        return {"linkage": "standalone"}
+        return None
     for line in completed.stdout.splitlines():
         if "libclipper2next.so" not in line or "=>" not in line:
             continue
         path_text = line.split("=>", 1)[1].strip().split(" ", 1)[0]
         library = Path(path_text)
         if library.is_file():
-            return {
-                "linkage": "shared",
-                "path": str(library.resolve()),
-                "sha256": sha256_file(library),
-            }
-    return {"linkage": "standalone"}
+            return line.split("=>", 1)[0].strip(), library.resolve()
+    return None
+
+
+def runtime_library_identity(
+    benchmark_executable: Path,
+    artifact_directory: Path | None = None,
+) -> dict:
+    resolved = _runtime_library(benchmark_executable)
+    if resolved is None:
+        return {"linkage": "standalone"}
+    soname, library = resolved
+    result = {
+        "linkage": "shared",
+        "soname": soname,
+        "basename": library.name,
+        "sha256": sha256_file(library),
+    }
+    if artifact_directory is not None:
+        artifact_directory.mkdir(parents=True, exist_ok=True)
+        destination = artifact_directory / library.name
+        shutil.copy2(library, destination)
+        if sha256_file(destination) != result["sha256"]:
+            raise RuntimeError("archived runtime library identity changed during copy")
+        result["artifact_id"] = destination.relative_to(
+            artifact_directory.parent
+        ).as_posix()
+    return result
+
+
+def release_identity(repository: dict) -> str:
+    payload = {
+        "head_commit": repository["head_commit"],
+        "head_tree": repository["head_tree"],
+        "canonical_source_identity": repository["canonical_source_identity"],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return f"sha256:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
 
 
 def collect_evidence_identity(
     root: Path,
     benchmark_executable: Path,
+    artifact_directory: Path | None = None,
 ) -> dict:
     executable_identity = (
         sha256_file(benchmark_executable)
@@ -277,16 +350,30 @@ def collect_evidence_identity(
     build_identity = compiler_identity(benchmark_executable)
     data_identity = corpus_identity()
     protocol = protocol_identity(root)
-    runtime = runtime_library_identity(benchmark_executable)
+    runtime = runtime_library_identity(benchmark_executable, artifact_directory)
     repository = git_repository_identity(root)
+    benchmark_artifact_id = None
+    if artifact_directory is not None and benchmark_executable.is_file():
+        artifact_directory.mkdir(parents=True, exist_ok=True)
+        archived_executable = artifact_directory / benchmark_executable.name
+        shutil.copy2(benchmark_executable, archived_executable)
+        if sha256_file(archived_executable) != executable_identity:
+            raise RuntimeError("archived benchmark identity changed during copy")
+        benchmark_artifact_id = archived_executable.relative_to(
+            artifact_directory.parent
+        ).as_posix()
     payload = {
         "benchmark_executable_identity": executable_identity,
+        "benchmark_artifact_id": benchmark_artifact_id,
         "candidate_source_identity": source_identity,
         "compiler_identity": build_identity,
         "corpus_identity": data_identity,
         "protocol_identity": protocol,
         "runtime_library_identity": runtime,
         "git_repository_identity": repository,
+        "release_identity": (
+            release_identity(repository) if repository is not None else None
+        ),
     }
     complete = all(
         payload[key] is not None
@@ -297,6 +384,7 @@ def collect_evidence_identity(
             "corpus_identity",
             "protocol_identity",
             "git_repository_identity",
+            "release_identity",
         )
     )
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
