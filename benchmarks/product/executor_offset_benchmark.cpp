@@ -19,25 +19,20 @@ struct thread_executor final {
     std::size_t worker_count{};
 };
 
-[[nodiscard]] auto execute_chunks(
-    void* const state,
-    const std::size_t item_count,
-    const std::size_t minimum_grain,
-    const std::size_t requested_concurrency,
-    const clipper2next::bulk_task_ref task) noexcept
+[[nodiscard]] auto execute_chunks(void* const state,
+                                  const std::size_t item_count,
+                                  const std::size_t minimum_grain,
+                                  const std::size_t requested_concurrency,
+                                  const clipper2next::bulk_task_ref task) noexcept
     -> clipper2next::bulk_execution_error {
-    const auto worker_count = std::min(
-        static_cast<thread_executor*>(state)->worker_count,
-        requested_concurrency);
+    const auto worker_count =
+        std::min(static_cast<thread_executor*>(state)->worker_count, requested_concurrency);
     const auto grain = std::max<std::size_t>(minimum_grain, 1U);
     auto next = std::atomic_size_t{};
     const auto worker = [&] {
         while (true) {
-            const auto begin = next.fetch_add(
-                grain, std::memory_order_relaxed);
-            if (begin >= item_count) {
-                return;
-            }
+            const auto begin = next.fetch_add(grain, std::memory_order_relaxed);
+            if (begin >= item_count) { return; }
             task(begin, std::min(item_count, begin + grain));
         }
     };
@@ -50,15 +45,12 @@ struct thread_executor final {
         worker();
     } catch (const std::bad_alloc&) {
         return clipper2next::bulk_execution_error::allocation_failure;
-    } catch (...) {
-        return clipper2next::bulk_execution_error::scheduler_failure;
-    }
+    } catch (...) { return clipper2next::bulk_execution_error::scheduler_failure; }
     return clipper2next::bulk_execution_error::none;
 }
 
-[[nodiscard]] auto dense_rectangle(
-    const std::int64_t left,
-    const std::int64_t top) -> clipper2next::Path64 {
+[[nodiscard]] auto dense_rectangle(const std::int64_t left, const std::int64_t top)
+    -> clipper2next::Path64 {
     constexpr auto edge = std::int64_t{256};
     auto path = clipper2next::Path64{};
     path.reserve(1'024U);
@@ -68,12 +60,8 @@ struct thread_executor final {
     for (auto value = std::int64_t{1}; value <= edge; ++value) {
         path.push_back({left + edge, top + value});
     }
-    for (auto value = edge - 1; value >= 0; --value) {
-        path.push_back({left + value, top + edge});
-    }
-    for (auto value = edge - 1; value > 0; --value) {
-        path.push_back({left, top + value});
-    }
+    for (auto value = edge - 1; value >= 0; --value) { path.push_back({left + value, top + edge}); }
+    for (auto value = edge - 1; value > 0; --value) { path.push_back({left, top + value}); }
     return path;
 }
 
@@ -100,30 +88,16 @@ struct thread_executor final {
     return paths;
 }
 
-[[nodiscard]] auto request_for(
-    const clipper2next::Paths64& paths)
-    -> clipper2next::borrowed_offset_request64 {
-    auto request = clipper2next::borrowed_offset_request64{};
-    request.paths = clipper2next::borrow_paths64(paths);
-    request.delta = 5.0;
-    request.join_type = clipper2next::JoinType::Miter;
-    request.end_type = clipper2next::EndType::Polygon;
-    return request;
-}
-
-[[nodiscard]] auto same_path_set(
-    const clipper2next::path_set64& first,
-    const clipper2next::path_set64& second) -> bool {
+[[nodiscard]] auto same_path_set(const clipper2next::path_set64& first,
+                                 const clipper2next::path_set64& second) -> bool {
     if (!std::ranges::equal(first.points(), second.points()) ||
         first.descriptors().size() != second.descriptors().size()) {
         return false;
     }
-    for (auto index = std::size_t{};
-         index < first.descriptors().size(); ++index) {
+    for (auto index = std::size_t{}; index < first.descriptors().size(); ++index) {
         const auto& left = first.descriptors()[index];
         const auto& right = second.descriptors()[index];
-        if (left.pointOffset != right.pointOffset ||
-            left.pointCount != right.pointCount ||
+        if (left.pointOffset != right.pointOffset || left.pointCount != right.pointCount ||
             left.closure != right.closure) {
             return false;
         }
@@ -133,7 +107,9 @@ struct thread_executor final {
 
 void BM_offset_executor_serial(benchmark::State& state) {
     const auto paths = source_paths();
-    const auto request = request_for(paths);
+    const auto group = clipper2next::borrowed_offset_group64{clipper2next::borrow_paths64(paths)};
+    const auto request =
+        clipper2next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5.0};
     for (auto iteration : state) {
         static_cast<void>(iteration);
         auto result = clipper2next::offset_stage_checked(request);
@@ -147,9 +123,10 @@ void BM_offset_executor_serial(benchmark::State& state) {
 
 void BM_offset_executor_concurrent(benchmark::State& state) {
     const auto paths = source_paths();
-    const auto request = request_for(paths);
-    auto executor_state = thread_executor{
-        static_cast<std::size_t>(state.range(0))};
+    const auto group = clipper2next::borrowed_offset_group64{clipper2next::borrow_paths64(paths)};
+    const auto request =
+        clipper2next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5.0};
+    auto executor_state = thread_executor{static_cast<std::size_t>(state.range(0))};
     const auto executor = clipper2next::sync_bulk_executor_ref{
         &executor_state, executor_state.worker_count, &execute_chunks};
     const auto serial = clipper2next::offset_stage_checked(request);
@@ -171,7 +148,9 @@ void BM_offset_executor_concurrent(benchmark::State& state) {
 
 void BM_offset_executor_collinear_serial(benchmark::State& state) {
     const auto paths = dense_collinear_paths();
-    const auto request = request_for(paths);
+    const auto group = clipper2next::borrowed_offset_group64{clipper2next::borrow_paths64(paths)};
+    const auto request =
+        clipper2next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5.0};
     for (auto iteration : state) {
         static_cast<void>(iteration);
         auto result = clipper2next::offset_stage_checked(request);
@@ -185,9 +164,10 @@ void BM_offset_executor_collinear_serial(benchmark::State& state) {
 
 void BM_offset_executor_collinear_concurrent(benchmark::State& state) {
     const auto paths = dense_collinear_paths();
-    const auto request = request_for(paths);
-    auto executor_state = thread_executor{
-        static_cast<std::size_t>(state.range(0))};
+    const auto group = clipper2next::borrowed_offset_group64{clipper2next::borrow_paths64(paths)};
+    const auto request =
+        clipper2next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5.0};
+    auto executor_state = thread_executor{static_cast<std::size_t>(state.range(0))};
     const auto executor = clipper2next::sync_bulk_executor_ref{
         &executor_state, executor_state.worker_count, &execute_chunks};
     const auto serial = clipper2next::offset_stage_checked(request);
@@ -212,4 +192,4 @@ BENCHMARK(BM_offset_executor_concurrent)->Arg(2)->Arg(4)->Arg(8)->Arg(16);
 BENCHMARK(BM_offset_executor_collinear_serial);
 BENCHMARK(BM_offset_executor_collinear_concurrent)->Arg(16);
 
-} // namespace
+}  // namespace

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -8,7 +9,11 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from benchmarks.tools.common.release_gate_policy import EXTERNAL_CORE_BENCHMARK_NAMES
+from benchmarks.tools.common.release_gate_policy import (
+    EXTERNAL_CORE_BENCHMARK_NAMES,
+    EXTERNAL_CORE_TIME_FIELD,
+    coefficient_of_variation_percent,
+)
 
 
 def ensure_parent(path: Path) -> None:
@@ -32,12 +37,7 @@ def external_cv_rows(benchmarks: list[dict]) -> list[tuple[str, float]]:
             continue
         if not name.startswith("BM_external_") or not name.endswith("_cv"):
             continue
-        cpu_time = benchmark.get("cpu_time")
-        if not isinstance(cpu_time, int | float):
-            continue
-        cv_percent = float(cpu_time)
-        if benchmark.get("aggregate_unit") == "percentage" and abs(cv_percent) <= 1.0:
-            cv_percent *= 100.0
+        cv_percent = coefficient_of_variation_percent(benchmark)
         rows.append((name.removesuffix("_cv"), cv_percent))
     return rows
 
@@ -66,6 +66,7 @@ def write_json_report(
     payload: dict = {
         "status": status,
         "max_cv_percent": max_cv_percent,
+        "time_field": EXTERNAL_CORE_TIME_FIELD,
         "rows": rows,
         "missing": missing or [],
     }
@@ -89,6 +90,7 @@ def write_markdown_report(
         "",
         f"Status: **{status}**",
         f"Max CV threshold: **{max_cv_percent:.2f}%**",
+        f"Time field: **{EXTERNAL_CORE_TIME_FIELD}**",
     ]
     if reason is not None:
         lines.extend(["", f"Reason: {reason}"])
@@ -144,6 +146,8 @@ def main() -> int:
     parser.add_argument("--output-md")
     parser.add_argument("--output-json")
     args = parser.parse_args()
+    if not math.isfinite(args.max_cv_percent) or args.max_cv_percent < 0:
+        parser.error("--max-cv-percent must be finite and nonnegative")
 
     if args.require_calibrated_runner and os.environ.get("CLIPPER2NEXT_CALIBRATED_RUNNER") != "1":
         reason = "CLIPPER2NEXT_CALIBRATED_RUNNER=1 is required for a calibrated performance gate"

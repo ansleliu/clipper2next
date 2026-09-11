@@ -2,6 +2,7 @@
 import argparse
 import ctypes
 import json
+import math
 import os
 import platform
 import socket
@@ -344,6 +345,9 @@ def bind_derived_identity(path: Path, identity: str) -> None:
 
 def release_policy_weakening_reasons(args: argparse.Namespace) -> list[str]:
     reasons: list[str] = []
+    for field in ("min_time", "max_cv_percent", "min_pair_speedup", "min_geomean_speedup"):
+        if not math.isfinite(getattr(args, field)):
+            reasons.append(f"{field} must be finite")
     if args.repetitions < CALIBRATED_EXTERNAL_REPETITIONS:
         reasons.append(
             f"repetitions {args.repetitions} is below "

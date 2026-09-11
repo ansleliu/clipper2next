@@ -50,16 +50,15 @@ namespace {
     bool needs_cleanup = false;
     const Point64* previous = nullptr;
     for (const auto& point : source) {
-        if (check_coordinate_range &&
-            (!internal::clip_coordinate_in_range(point.x) ||
-             !internal::clip_coordinate_in_range(point.y))) {
+        if (check_coordinate_range && (!internal::clip_coordinate_in_range(point.x) ||
+                                       !internal::clip_coordinate_in_range(point.y))) {
             return false;
         }
         if (previous != nullptr && *previous == point) { needs_cleanup = true; }
         previous = &point;
     }
-    needs_cleanup = needs_cleanup ||
-                    (is_closed && source.size() > 1U && source.back() == source.front());
+    needs_cleanup =
+        needs_cleanup || (is_closed && source.size() > 1U && source.back() == source.front());
     if (!needs_cleanup) {
         destination.assign(source.begin(), source.end());
         return true;
@@ -96,8 +95,8 @@ namespace {
     return true;
 }
 
-[[nodiscard]] auto offset_impl(
-    const offset_request64& request, bool check_coordinate_range) -> paths64_result {
+[[nodiscard]] auto offset_impl(const offset_request64& request, bool check_coordinate_range)
+    -> paths64_result {
     paths64_result result;
     if (std::abs(request.delta) < 0.5) {
         if (check_coordinate_range) {
@@ -124,6 +123,7 @@ namespace {
             .reverse_solution = request.options.reverse_solution,
             .check_input_coordinate_range = false,
             .coordinate_rounding = request.coordinate_rounding,
+            .intersection_policy = request.options.intersection_policy,
         },
         nullptr);
     return result;

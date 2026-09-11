@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 namespace clipper2next {
 
@@ -27,11 +28,17 @@ struct borrowed_offset_limits64 final {
     std::size_t maximum_engine_workspace_bytes{(std::numeric_limits<std::size_t>::max)()};
 };
 
-struct borrowed_offset_request64 final {
+struct borrowed_offset_group64 final {
     borrowed_paths64 paths{};
-    double delta{0.0};
     JoinType join_type{JoinType::Miter};
     EndType end_type{EndType::Polygon};
+};
+
+struct borrowed_offset_request64 final {
+    // Borrowed through completion. All groups share one generation/cleanup
+    // operation: offset-then-union per group is not numerically equivalent.
+    std::span<const borrowed_offset_group64> groups{};
+    double delta{0.0};
     double miter_limit{2.0};
     // Maximum radial approximation error in coordinate units. Zero selects
     // Clipper2's delta-relative default tolerance.
@@ -39,8 +46,7 @@ struct borrowed_offset_request64 final {
     // Nonzero selects an exact number of round-join segments per quadrant
     // and takes precedence over arc_tolerance.
     std::size_t arc_segments_per_quadrant{};
-    geotypes::CoordinateRounding coordinate_rounding{
-        geotypes::CoordinateRounding::NearestEven};
+    geotypes::CoordinateRounding coordinate_rounding{geotypes::CoordinateRounding::NearestEven};
     execution_options options{};
     borrowed_offset_limits64 limits{};
 };
@@ -67,7 +73,6 @@ struct borrowed_offset_stage_result64 final {
     borrowed_offset_stage_stats64 stats{};
 };
 
-using expected_borrowed_offset_stage_result64 =
-    clipper_result<borrowed_offset_stage_result64>;
+using expected_borrowed_offset_stage_result64 = clipper_result<borrowed_offset_stage_result64>;
 
 }  // namespace clipper2next

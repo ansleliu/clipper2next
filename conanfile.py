@@ -31,7 +31,7 @@ def normalize_exported_text(root: str) -> None:
 
 class Clipper2NextConan(ConanFile):
     name = "clipper2next"
-    version = "5.0.1"
+    version = "6.0.0"
     package_type = "shared-library"
     license = "BSL-1.0"
     description = "Standalone C++23 integer polygon geometry library"

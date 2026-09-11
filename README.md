@@ -18,9 +18,18 @@ ranges, flat path sets, and streaming topology output.
 
 The project is tested on Windows with MSVC and on Linux with GCC 13.
 
-Version 5.0.0 intentionally starts a new ABI generation for the complete
-offset-stage statistics contract. The shared library therefore uses SONAME 5;
-4.x consumers must rebuild, and no dual ABI or compatibility shim is shipped.
+Version 6.0.0 starts a new ABI generation for borrowed offset groups. One request
+borrows all groups through completion and performs one shared generation/cleanup
+operation. The shared library uses SONAME 6; 5.x consumers must rebuild and
+migrate the former single-group request fields. No dual ABI or compatibility
+shim is shipped. The default algorithm retains the strict legacy Clipper2
+result contract.
+
+For this release, Windows performance-variance qualification is deferred by an
+explicit release decision. The retained Windows measurements meet the 1.2x
+speedup floor but are **NOISY** against the unchanged 5% wall-time CV gate.
+Linux performance qualification passes. This exception does not waive geometry
+correctness, strict legacy equivalence, installation, or export-boundary gates.
 
 ## Build
 

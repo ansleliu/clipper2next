@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import math
+
 from tools.release.evidence_contract import load_contract
 
 
@@ -21,6 +23,21 @@ CALIBRATED_EXTERNAL_MIN_GEOMEAN_SPEEDUP = float(
     _PERFORMANCE["min_geomean_speedup"]
 )
 EXTERNAL_CORE_SPEEDUP_MODE = "default-unprepared"
+EXTERNAL_CORE_TIME_FIELD = str(_PERFORMANCE["time_field"])
+
+
+def coefficient_of_variation_percent(record: dict, time_field: str = EXTERNAL_CORE_TIME_FIELD) -> float:
+    value = record.get(time_field)
+    if (isinstance(value, bool) or not isinstance(value, (int, float))
+            or not math.isfinite(value) or value < 0):
+        raise ValueError(f"{record.get('name')}: {time_field} CV must be finite and nonnegative")
+    if record.get("aggregate_unit") != "percentage":
+        raise ValueError(f"{record.get('name')}: CV must declare the percentage aggregate unit")
+    # Google Benchmark emits the dimensionless coefficient, including values
+    # above one (e.g. 1.5 means 150%, never 1.5%). No heuristic unit guessing.
+    return float(value) * 100.0
+
+
 _SOURCE = "geometry_corpus"
 
 EXTERNAL_CORE_BENCHMARK_GROUPS = (

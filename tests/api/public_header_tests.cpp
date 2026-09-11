@@ -47,19 +47,13 @@
 namespace next = clipper2next;
 
 template <typename T>
-concept has_deterministic_member = requires(T value) {
-    value.deterministic;
-};
+concept has_deterministic_member = requires(T value) { value.deterministic; };
 
 template <typename T>
-concept exposes_runtime_data = requires(const T& value) {
-    value.runtime_data();
-};
+concept exposes_runtime_data = requires(const T& value) { value.runtime_data(); };
 
 template <typename T>
-concept exposes_path_bounds = requires(const T& value) {
-    value.path_bounds();
-};
+concept exposes_path_bounds = requires(const T& value) { value.path_bounds(); };
 
 static_assert(!has_deterministic_member<next::execution_options>);
 static_assert(!exposes_runtime_data<next::prepared_clip_request64>);
@@ -116,16 +110,16 @@ TEST(Clipper2NextPublicHeaderTests, PublicHeadersExposeStableFacadeTypes) {
 }
 
 TEST(Clipper2NextPublicHeaderTests, PreparedHandlesExposeReadOnlySnapshots) {
-    EXPECT_TRUE((std::is_assignable_v<next::prepared_clip_request64&,
-                                      next::prepared_clip_request64>));
+    EXPECT_TRUE(
+        (std::is_assignable_v<next::prepared_clip_request64&, next::prepared_clip_request64>));
     EXPECT_TRUE((std::is_assignable_v<next::prepared_rect_clip_request64&,
                                       next::prepared_rect_clip_request64>));
-    EXPECT_FALSE((std::is_assignable_v<
-                  decltype((std::declval<next::prepared_clip_request64&>().request())),
-                  next::clip_request64>));
-    EXPECT_FALSE((std::is_assignable_v<
-                  decltype((std::declval<next::prepared_clip_request64&>().metadata())),
-                  next::clip_request_metadata64>));
+    EXPECT_FALSE(
+        (std::is_assignable_v<decltype((std::declval<next::prepared_clip_request64&>().request())),
+                              next::clip_request64>));
+    EXPECT_FALSE(
+        (std::is_assignable_v<decltype((std::declval<next::prepared_clip_request64&>().metadata())),
+                              next::clip_request_metadata64>));
     EXPECT_FALSE((std::is_assignable_v<
                   decltype((std::declval<next::prepared_rect_clip_request64&>().request())),
                   next::rect_clip_request64>));
@@ -198,15 +192,15 @@ TEST(Clipper2NextPublicHeaderTests, PublicFacadesCompileAndExecute) {
     offset_request.delta = 2.0;
     EXPECT_FALSE(next::offset(offset_request).closed.empty());
 
+    auto borrowed_offset_request_group = next::borrowed_offset_group64{};
     auto borrowed_offset_request = next::borrowed_offset_request64{};
-    borrowed_offset_request.paths = next::borrow_paths64(paths);
+    borrowed_offset_request.groups = std::span{&borrowed_offset_request_group, 1U};
+    borrowed_offset_request_group.paths = next::borrow_paths64(paths);
     borrowed_offset_request.delta = 2.0;
-    const auto borrowed_offset_result =
-        next::offset_stage_checked(borrowed_offset_request);
+    const auto borrowed_offset_result = next::offset_stage_checked(borrowed_offset_request);
     ASSERT_TRUE(borrowed_offset_result.has_value());
     EXPECT_FALSE(borrowed_offset_result->paths.empty());
-    EXPECT_EQ(
-        borrowed_offset_result->stats.input_collection_point_writes, 0U);
+    EXPECT_EQ(borrowed_offset_result->stats.input_collection_point_writes, 0U);
 
     const auto translated_path = next::translate(paths.front(), 1, 2);
     const auto translated_paths = next::translate(paths, 1, 2);

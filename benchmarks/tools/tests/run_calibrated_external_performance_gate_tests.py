@@ -293,6 +293,18 @@ class CalibratedExternalPerformanceGateTests(unittest.TestCase):
                     (output_dir / "unit_external_benchmark.json").exists()
                 )
 
+    def test_nonfinite_thresholds_cannot_bypass_release_comparisons(self) -> None:
+        from argparse import Namespace
+        from benchmarks.tools.runners.run_calibrated_external_performance_gate import release_policy_weakening_reasons
+        defaults = dict(repetitions=7, min_time=0.5, max_cv_percent=5.0,
+                        min_pair_speedup=1.2, min_geomean_speedup=1.2,
+                        skip_speedup_gate=False)
+        for field in ("min_time", "max_cv_percent", "min_pair_speedup", "min_geomean_speedup"):
+            for value in (float("nan"), float("inf"), float("-inf")):
+                with self.subTest(field=field, value=value):
+                    args = Namespace(**(defaults | {field: value}))
+                    self.assertTrue(release_policy_weakening_reasons(args))
+
     def test_calibrated_run_writes_benchmark_variance_speedup_and_summary_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

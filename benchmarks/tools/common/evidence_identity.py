@@ -116,6 +116,9 @@ def git_repository_identity(root: Path) -> dict | None:
     inside = _git(root, "rev-parse", "--is-inside-work-tree", check=False)
     if inside.returncode != 0 or inside.stdout.strip() != b"true":
         return None
+    top_level = _git(root, "rev-parse", "--show-toplevel").stdout.decode("utf-8").strip()
+    if Path(top_level).resolve() != root.resolve():
+        return None
     head_commit = _git(root, "rev-parse", "HEAD").stdout.decode("ascii").strip()
     head_tree = _git(root, "rev-parse", "HEAD^{tree}").stdout.decode("ascii").strip()
     head_blobs = _head_blobs(root)

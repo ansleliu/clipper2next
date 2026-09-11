@@ -14,6 +14,41 @@ namespace oracle = clipper2next::tests::oracle;
 
 namespace {
 
+TEST(Clipper2NextDifferentialOffsetTests, MixedBorrowedGroupsUseOneLegacyEquivalentCleanup) {
+    const auto area = next::Paths64{{{0, 0}, {100, 0}, {100, 100}, {0, 100}}};
+    const auto lines = next::Paths64{{{-10, 50}, {110, 50}}, {{50, -10}, {50, 110}}};
+    const auto groups =
+        std::array{next::borrowed_offset_group64{
+                       next::borrow_paths64(area), next::JoinType::Round, next::EndType::Polygon},
+                   next::borrowed_offset_group64{
+                       next::borrow_paths64(lines), next::JoinType::Round, next::EndType::Round}};
+    for (const auto delta : {2.0, 8.0, 35.0}) {
+        auto request = next::borrowed_offset_request64{};
+        request.groups = groups;
+        request.delta = delta;
+        request.arc_tolerance = 0.25;
+        request.options.preserve_collinear = true;
+        legacy::ClipperOffset reference{2.0, 0.25, true};
+        reference.AddPaths(
+            oracle::to_legacy_paths(area), legacy::JoinType::Round, legacy::EndType::Polygon);
+        reference.AddPaths(
+            oracle::to_legacy_paths(lines), legacy::JoinType::Round, legacy::EndType::Round);
+        legacy::Paths64 expected;
+        reference.Execute(delta, expected);
+        const auto actual = next::offset_stage_checked(request);
+        ASSERT_TRUE(actual);
+        auto paths = next::Paths64{};
+        for (const auto path : actual->paths) { paths.emplace_back(path.begin(), path.end()); }
+        EXPECT_NO_THROW(oracle::assert_paths_semantically_equal(expected, paths));
+        EXPECT_EQ(actual->stats.input_collection_point_writes, 0U);
+        EXPECT_EQ(actual->stats.engine_input_point_writes, 8U);
+        request.limits.maximum_input_point_count = 7U;
+        const auto rejected = next::offset_stage_checked(request);
+        ASSERT_FALSE(rejected);
+        EXPECT_EQ(rejected.error(), next::clipper_error_code::resource_limit);
+    }
+}
+
 [[nodiscard]] auto to_legacy_join(next::JoinType join_type) -> legacy::JoinType {
     switch (join_type) {
     case next::JoinType::Square: {
@@ -58,13 +93,12 @@ namespace {
                                          next::JoinType join_type,
                                          next::EndType end_type,
                                          double arc_tolerance = 0.0) -> legacy::Paths64 {
-    return legacy::InflatePaths(
-        oracle::to_legacy_paths(paths),
-        delta,
-        to_legacy_join(join_type),
-        to_legacy_end(end_type),
-        2.0,
-        arc_tolerance);
+    return legacy::InflatePaths(oracle::to_legacy_paths(paths),
+                                delta,
+                                to_legacy_join(join_type),
+                                to_legacy_end(end_type),
+                                2.0,
+                                arc_tolerance);
 }
 
 [[nodiscard]] auto execute_next_offset(const next::Paths64& paths,
@@ -81,12 +115,41 @@ namespace {
     return next::offset(request).closed;
 }
 
+TEST(Clipper2NextDifferentialOffsetTests, BorrowedOpenPathsMatchLegacyIncludingRepeatedEndpoints) {
+    const auto source = next::Paths64{next::Path64{{0, 0}, {20, 0}, {20, 20}, {0, 0}, {0, 0}}};
+    auto flat = next::path_set64{};
+    flat.append(source.front(), geotypes::PathClosure::Open);
+    for (const auto end : {next::EndType::Butt, next::EndType::Square, next::EndType::Round}) {
+        for (const auto join :
+             {next::JoinType::Miter, next::JoinType::Bevel, next::JoinType::Round}) {
+            for (const auto delta : {1.0, 2.0, 9.0}) {
+                const auto expected = execute_legacy_offset(source, delta, join, end);
+                for (const auto& input :
+                     {next::borrow_paths64(flat.view()), next::borrow_paths64(source)}) {
+                    auto request_group = next::borrowed_offset_group64{};
+                    auto request = next::borrowed_offset_request64{};
+                    request.groups = std::span{&request_group, 1U};
+                    request_group.paths = input;
+                    request.delta = delta;
+                    request_group.join_type = join;
+                    request_group.end_type = end;
+                    const auto result = next::offset_stage_checked(request);
+                    ASSERT_TRUE(result);
+                    auto actual = next::Paths64{};
+                    for (const auto path : result->paths) {
+                        actual.emplace_back(path.begin(), path.end());
+                    }
+                    EXPECT_NO_THROW(oracle::assert_paths_semantically_equal(expected, actual));
+                }
+            }
+        }
+    }
+}
+
 [[nodiscard]] auto materialize(const next::path_set64& paths) -> next::Paths64 {
     auto result = next::Paths64{};
     result.reserve(paths.size());
-    for (const auto path : paths) {
-        result.emplace_back(path.begin(), path.end());
-    }
+    for (const auto path : paths) { result.emplace_back(path.begin(), path.end()); }
     return result;
 }
 
@@ -196,10 +259,7 @@ TEST(Clipper2NextDifferentialOffsetTests, OpenJoinAndEndTypeMatrixMatchesLegacy)
     const auto subject = matrix_open_subject();
     const next::JoinType join_types[] = {next::JoinType::Miter, next::JoinType::Round};
     const next::EndType end_types[] = {
-        next::EndType::Joined,
-        next::EndType::Butt,
-        next::EndType::Square,
-        next::EndType::Round};
+        next::EndType::Joined, next::EndType::Butt, next::EndType::Square, next::EndType::Round};
 
     for (const auto join_type : join_types) {
         for (const auto end_type : end_types) {
@@ -218,55 +278,41 @@ TEST(Clipper2NextDifferentialOffsetTests, RoundArcToleranceMatrixMatchesLegacy) 
     for (const auto arc_tolerance : {0.0, 0.01, 0.25, 2.0, 100.0}) {
         SCOPED_TRACE("arc_tolerance=" + std::to_string(arc_tolerance));
         EXPECT_NO_THROW(oracle::assert_paths_semantically_equal(
-            execute_legacy_offset(polygon,
-                                  12.0,
-                                  next::JoinType::Round,
-                                  next::EndType::Polygon,
-                                  arc_tolerance),
-            execute_next_offset(polygon,
-                                12.0,
-                                next::JoinType::Round,
-                                next::EndType::Polygon,
-                                arc_tolerance)));
+            execute_legacy_offset(
+                polygon, 12.0, next::JoinType::Round, next::EndType::Polygon, arc_tolerance),
+            execute_next_offset(
+                polygon, 12.0, next::JoinType::Round, next::EndType::Polygon, arc_tolerance)));
         EXPECT_NO_THROW(oracle::assert_paths_semantically_equal(
-            execute_legacy_offset(open,
-                                  9.0,
-                                  next::JoinType::Round,
-                                  next::EndType::Round,
-                                  arc_tolerance),
-            execute_next_offset(open,
-                                9.0,
-                                next::JoinType::Round,
-                                next::EndType::Round,
-                                arc_tolerance)));
+            execute_legacy_offset(
+                open, 9.0, next::JoinType::Round, next::EndType::Round, arc_tolerance),
+            execute_next_offset(
+                open, 9.0, next::JoinType::Round, next::EndType::Round, arc_tolerance)));
     }
 }
 
-TEST(Clipper2NextDifferentialOffsetTests,
-     FlatPathSetInputAndOutputMatchLegacyWithoutTolerance) {
+TEST(Clipper2NextDifferentialOffsetTests, FlatPathSetInputAndOutputMatchLegacyWithoutTolerance) {
     const auto subject = generated_offset_subjects();
     auto flat = next::path_set64{};
     flat.reserve(subject.size(), total_point_count(subject));
-    for (const auto& path : subject) {
-        flat.append(path, geotypes::PathClosure::ClosedImplicit);
-    }
+    for (const auto& path : subject) { flat.append(path, geotypes::PathClosure::ClosedImplicit); }
 
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(flat.view());
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(flat.view());
     request.delta = 12.0;
-    request.join_type = next::JoinType::Round;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Round;
+    request_group.end_type = next::EndType::Polygon;
     request.arc_tolerance = 0.25;
     const auto actual = next::offset_stage_checked(request);
 
     ASSERT_TRUE(actual.has_value()) << static_cast<int>(actual.error());
     const auto expected = execute_legacy_offset(subject,
                                                 request.delta,
-                                                request.join_type,
-                                                request.end_type,
+                                                request_group.join_type,
+                                                request_group.end_type,
                                                 request.arc_tolerance);
-    EXPECT_NO_THROW(
-        oracle::assert_paths_semantically_equal(expected, materialize(actual->paths)));
+    EXPECT_NO_THROW(oracle::assert_paths_semantically_equal(expected, materialize(actual->paths)));
 }
 
 TEST(Clipper2NextDifferentialOffsetTests, GeneratedLongPolygonOffsetCorpusMatchesLegacy) {

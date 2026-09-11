@@ -1,6 +1,7 @@
 #include "clipper2next/offset.h"
 #include "clipper2next/api/execution.h"
 #include "geometry/private/path_simplicity.h"
+#include "support/path_equivalence.h"
 
 #include <gtest/gtest.h>
 
@@ -14,6 +15,60 @@
 #include <vector>
 
 namespace next = clipper2next;
+
+TEST(Clipper2NextBorrowedOffsetApiTests, CleanupHonorsTheRequestedIntersectionPrecision) {
+    const auto paths = next::Paths64{{{0, 0}, {12, 3}}, {{0, 4}, {12, 0}}};
+    const auto group = next::borrowed_offset_group64{
+        next::borrow_paths64(paths), next::JoinType::Miter, next::EndType::Butt};
+    auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 1.0};
+    request.options.intersection_policy.mode = next::precision_mode::precise;
+    const auto result = next::offset_stage_checked(request);
+    ASSERT_TRUE(result);
+    // Rounded offset support lines are y=x/4-1 and y=3-x/3.
+    // Their exact intersection is (48/7,5/7), nearest-even -> (7,1).
+    const auto points = result->paths.points();
+    EXPECT_NE(std::find(points.begin(), points.end(), next::Point64{7, 1}), points.end());
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, OpenViewsAndRepeatedEndpointsMatchOwningOffset) {
+    const auto inputs = std::vector<next::Paths64>{
+        next::Paths64{next::Path64{{0, 0}, {20, 0}}},
+        next::Paths64{next::Path64{{0, 0}, {20, 0}, {20, 20}, {0, 0}}},
+        next::Paths64{next::Path64{{0, 0}, {0, 0}, {20, 0}, {20, 20}, {0, 0}, {0, 0}}}};
+    for (const auto& paths : inputs) {
+        auto flat = next::path_set64{};
+        for (const auto& path : paths) { flat.append(path, geotypes::PathClosure::Open); }
+        for (const auto end : {next::EndType::Butt, next::EndType::Square, next::EndType::Round}) {
+            auto owned = next::offset_request64{};
+            owned.paths = paths;
+            owned.delta = 2.0;
+            owned.join_type = next::JoinType::Round;
+            owned.end_type = end;
+            const auto expected = next::offset_checked(owned);
+            ASSERT_TRUE(expected);
+            for (const auto& source :
+                 {next::borrow_paths64(flat.view()), next::borrow_paths64(paths)}) {
+                auto borrowed_group = next::borrowed_offset_group64{};
+                auto borrowed = next::borrowed_offset_request64{};
+                borrowed.groups = std::span{&borrowed_group, 1U};
+                borrowed_group.paths = source;
+                borrowed.delta = owned.delta;
+                borrowed_group.join_type = owned.join_type;
+                borrowed_group.end_type = end;
+                const auto actual = next::offset_stage_checked(borrowed);
+                ASSERT_TRUE(actual);
+                auto materialized = next::Paths64{};
+                for (const auto path : actual->paths) {
+                    materialized.emplace_back(path.begin(), path.end());
+                }
+                // Ring origins are not stable API identities. Coordinates,
+                // orientation and vertex multiplicity remain exact.
+                EXPECT_EQ(next::tests::oracle::canonical_closed_paths(std::move(materialized)),
+                          next::tests::oracle::canonical_closed_paths(expected->closed));
+            }
+        }
+    }
+}
 
 namespace {
 
@@ -142,11 +197,13 @@ struct threaded_executor final {
 TEST(Clipper2NextBorrowedOffsetApiTests,
      ForeignRangesReachTheOffsetKernelWithoutAnOwningInputCollection) {
     const auto source = foreign_paths{rectangle(0, 0, 100, 100)};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
-    request.join_type = next::JoinType::Miter;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Miter;
+    request_group.end_type = next::EndType::Polygon;
 
     const auto result = next::offset_stage_checked(request);
 
@@ -169,11 +226,13 @@ TEST(Clipper2NextBorrowedOffsetApiTests, FlatInputStagingDoesNotAllocateOneOwner
         const auto left = index * 1000;
         source.push_back(rectangle(left, 0, left + 100, 100));
     }
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
-    request.join_type = next::JoinType::Miter;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Miter;
+    request_group.end_type = next::EndType::Polygon;
 
     const auto result = next::offset_stage_checked(request);
 
@@ -186,10 +245,12 @@ TEST(Clipper2NextBorrowedOffsetApiTests, FlatInputStagingDoesNotAllocateOneOwner
 
 TEST(Clipper2NextBorrowedOffsetApiTests, BorrowedAndOwningRequestsHaveIdenticalCanonicalOutput) {
     const auto source = foreign_paths{rectangle(0, 0, 100, 100)};
+    auto borrowed_group = next::borrowed_offset_group64{};
     auto borrowed = next::borrowed_offset_request64{};
-    borrowed.paths = next::borrow_paths64(source);
+    borrowed.groups = std::span{&borrowed_group, 1U};
+    borrowed_group.paths = next::borrow_paths64(source);
     borrowed.delta = 7.0;
-    borrowed.join_type = next::JoinType::Round;
+    borrowed_group.join_type = next::JoinType::Round;
     borrowed.arc_tolerance = 0.25;
 
     auto owning = next::offset_request64{};
@@ -197,7 +258,7 @@ TEST(Clipper2NextBorrowedOffsetApiTests, BorrowedAndOwningRequestsHaveIdenticalC
         next::Path64{{0, 0}, {100, 0}, {100, 100}, {0, 100}},
     };
     owning.delta = borrowed.delta;
-    owning.join_type = borrowed.join_type;
+    owning.join_type = borrowed_group.join_type;
     owning.arc_tolerance = borrowed.arc_tolerance;
 
     const auto borrowed_result = next::offset_stage_checked(borrowed);
@@ -210,8 +271,10 @@ TEST(Clipper2NextBorrowedOffsetApiTests, BorrowedAndOwningRequestsHaveIdenticalC
 
 TEST(Clipper2NextBorrowedOffsetApiTests, InputOutputAndWorkspaceLimitsFailClosed) {
     const auto source = foreign_paths{rectangle(0, 0, 100, 100)};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
 
     request.limits.maximum_input_point_count = 3U;
@@ -246,8 +309,10 @@ TEST(Clipper2NextBorrowedOffsetApiTests, InputOutputAndWorkspaceLimitsFailClosed
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ZeroDeltaStillUsesTheBorrowedSingleCopyContract) {
     const auto source = foreign_paths{rectangle(0, 0, 100, 100)};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
 
     const auto result = next::offset_stage_checked(request);
 
@@ -260,9 +325,11 @@ TEST(Clipper2NextBorrowedOffsetApiTests, ZeroDeltaStillUsesTheBorrowedSingleCopy
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ZeroDeltaRetainsOpenPathSemanticsInTheSharedDescriptor) {
     const auto source = foreign_paths{{{0, 0}, {100, 0}}};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
-    request.end_type = next::EndType::Butt;
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
+    request_group.end_type = next::EndType::Butt;
 
     const auto result = next::offset_stage_checked(request);
 
@@ -277,8 +344,10 @@ TEST(Clipper2NextBorrowedOffsetApiTests, CoordinatesOutsideTheOffsetKernelRangeF
         {0, 0},
         {0, 1},
     }};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 1.0;
 
     const auto result = next::offset_stage_checked(request);
@@ -290,10 +359,12 @@ TEST(Clipper2NextBorrowedOffsetApiTests, CoordinatesOutsideTheOffsetKernelRangeF
 TEST(Clipper2NextBorrowedOffsetApiTests,
      OffsetExecutionIsIndependentOfAndRestoresTheCallingRoundingMode) {
     const auto source = foreign_paths{rectangle(0, 0, 100, 100)};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 2.5;
-    request.join_type = next::JoinType::Miter;
+    request_group.join_type = next::JoinType::Miter;
     request.arc_tolerance = 0.25;
 
     const auto original_mode = std::fegetround();
@@ -314,11 +385,13 @@ TEST(Clipper2NextBorrowedOffsetApiTests,
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ExplicitAwayFromZeroRoundingPreservesHalfUnitOffsets) {
     const auto source = foreign_paths{rectangle(0, 0, 4, 4)};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 0.5;
-    request.join_type = next::JoinType::Miter;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Miter;
+    request_group.end_type = next::EndType::Polygon;
     request.coordinate_rounding = geotypes::CoordinateRounding::NearestAwayFromZero;
 
     const auto result = next::offset_stage_checked(request);
@@ -344,11 +417,13 @@ TEST(Clipper2NextBorrowedOffsetApiTests, ExplicitAwayFromZeroRoundingPreservesHa
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ExplicitQuadrantSegmentsOwnRoundJoinResolution) {
     const auto source = foreign_paths{rectangle(0, 0, 100, 100)};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 20.0;
-    request.join_type = next::JoinType::Round;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Round;
+    request_group.end_type = next::EndType::Polygon;
     request.arc_segments_per_quadrant = 1U;
 
     const auto coarse = next::offset_stage_checked(request);
@@ -363,11 +438,13 @@ TEST(Clipper2NextBorrowedOffsetApiTests, ExplicitQuadrantSegmentsOwnRoundJoinRes
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ExplicitExecutorPreservesSerialResultAndInputOrder) {
     const auto source = parallel_eligible_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
-    request.join_type = next::JoinType::Miter;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Miter;
+    request_group.end_type = next::EndType::Polygon;
     const auto serial = next::offset_stage_checked(request);
     ASSERT_TRUE(serial.has_value());
     auto executor_state = recording_executor{};
@@ -384,11 +461,13 @@ TEST(Clipper2NextBorrowedOffsetApiTests, ExplicitExecutorPreservesSerialResultAn
 TEST(Clipper2NextBorrowedOffsetApiTests,
      ExecutorCapabilityAboveKernelMaximumUsesOneEffectiveConcurrency) {
     const auto source = parallel_eligible_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
-    request.join_type = next::JoinType::Miter;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Miter;
+    request_group.end_type = next::EndType::Polygon;
     auto reference_state = recording_executor{};
     const auto reference_executor =
         next::sync_bulk_executor_ref{&reference_state, 16U, &execute_recorded_chunks};
@@ -411,8 +490,10 @@ TEST(Clipper2NextBorrowedOffsetApiTests,
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ExecutorFailureIsNotReportedAsGeometryFailure) {
     const auto source = parallel_eligible_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
     auto executor_state =
         recording_executor{.result = next::bulk_execution_error::scheduler_failure};
@@ -427,8 +508,10 @@ TEST(Clipper2NextBorrowedOffsetApiTests, ExecutorFailureIsNotReportedAsGeometryF
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ParallelWorkspaceSharesTheDirectPreparationPeak) {
     const auto source = parallel_eligible_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
     const auto serial = next::offset_stage_checked(request);
     ASSERT_TRUE(serial.has_value());
@@ -448,11 +531,13 @@ TEST(Clipper2NextBorrowedOffsetApiTests, ParallelWorkspaceSharesTheDirectPrepara
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ActualCleanupSizeAdmitsDenseDisjointParallelOffset) {
     const auto source = parallel_eligible_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
-    request.join_type = next::JoinType::Miter;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Miter;
+    request_group.end_type = next::EndType::Polygon;
     const auto reference = next::offset_stage_checked(request);
     ASSERT_TRUE(reference.has_value());
     request.limits.maximum_engine_work = 2'147'483'648ULL;
@@ -475,11 +560,13 @@ TEST(Clipper2NextBorrowedOffsetApiTests, ActualCleanupSizeAdmitsDenseDisjointPar
 
 TEST(Clipper2NextBorrowedOffsetApiTests, NegativeOffsetDoesNotClaimDisjointShellTopology) {
     const auto source = parallel_eligible_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = -5.0;
-    request.join_type = next::JoinType::Miter;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Miter;
+    request_group.end_type = next::EndType::Polygon;
 
     const auto result = next::offset_stage_checked(request);
 
@@ -501,11 +588,13 @@ TEST(Clipper2NextBorrowedOffsetApiTests, DirectTopologyCertificateValidatesTheAc
         });
     }
     const auto source = next::Paths64{std::move(path)};
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 64.0;
-    request.join_type = next::JoinType::Round;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Round;
+    request_group.end_type = next::EndType::Polygon;
     request.arc_segments_per_quadrant = 8U;
 
     const auto result = next::offset_stage_checked(request);
@@ -519,8 +608,10 @@ TEST(Clipper2NextBorrowedOffsetApiTests, DirectTopologyCertificateValidatesTheAc
 
 TEST(Clipper2NextBorrowedOffsetApiTests, ConcurrentExecutorIsByteExactWithSerialOffset) {
     const auto source = parallel_eligible_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
     const auto serial = next::offset_stage_checked(request);
     ASSERT_TRUE(serial.has_value());
@@ -537,8 +628,10 @@ TEST(Clipper2NextBorrowedOffsetApiTests, ConcurrentExecutorIsByteExactWithSerial
 
 TEST(Clipper2NextBorrowedOffsetApiTests, SubthresholdOffsetRemainsSerialWithAnExecutor) {
     const auto source = subthreshold_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
     auto executor_state = recording_executor{};
     const auto executor =
@@ -552,8 +645,10 @@ TEST(Clipper2NextBorrowedOffsetApiTests, SubthresholdOffsetRemainsSerialWithAnEx
 
 TEST(Clipper2NextBorrowedOffsetApiTests, InsufficientConcurrencyRemainsSerial) {
     const auto source = parallel_eligible_source();
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = 5.0;
     auto executor_state = recording_executor{};
     const auto executor =

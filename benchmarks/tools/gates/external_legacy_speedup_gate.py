@@ -8,7 +8,11 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from benchmarks.tools.common.release_gate_policy import EXTERNAL_CORE_SPEEDUP_PAIRS
+from benchmarks.tools.common.release_gate_policy import (
+    EXTERNAL_CORE_SPEEDUP_PAIRS,
+    EXTERNAL_CORE_TIME_FIELD,
+    coefficient_of_variation_percent,
+)
 
 
 DEFAULT_UNPREPARED_MODE = "default-unprepared"
@@ -19,7 +23,7 @@ def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def load_records(path: Path, time_field: str = "real_time") -> dict[str, dict[str, float | str]]:
+def load_records(path: Path, time_field: str = EXTERNAL_CORE_TIME_FIELD) -> dict[str, dict[str, float | str]]:
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
 
@@ -27,7 +31,7 @@ def load_records(path: Path, time_field: str = "real_time") -> dict[str, dict[st
 
 
 def load_records_from_payload(
-    payload: dict, time_field: str = "real_time"
+    payload: dict, time_field: str = EXTERNAL_CORE_TIME_FIELD
 ) -> dict[str, dict[str, float | str]]:
 
     benchmarks = payload.get("benchmarks")
@@ -41,6 +45,9 @@ def load_records_from_payload(
     for benchmark in benchmarks:
         name = benchmark.get("name")
         if not isinstance(name, str):
+            continue
+        if benchmark.get("run_type") == "aggregate" and name.endswith("_cv"):
+            cvs[name.removesuffix("_cv")] = coefficient_of_variation_percent(benchmark, time_field)
             continue
         measured_time = benchmark.get(time_field)
         if not isinstance(measured_time, int | float):
@@ -61,11 +68,6 @@ def load_records_from_payload(
             records[base_name] = {"time": time_value, "source": name}
         elif name.endswith("_mean"):
             means[name.removesuffix("_mean")] = time_value
-        elif name.endswith("_cv"):
-            cv_percent = time_value
-            if benchmark.get("aggregate_unit") == "percentage" and abs(cv_percent) <= 1.0:
-                cv_percent *= 100.0
-            cvs[name.removesuffix("_cv")] = cv_percent
 
     for name, measured_time in means.items():
         records.setdefault(name, {"time": measured_time, "source": f"{name}_mean"})
@@ -392,7 +394,7 @@ def main() -> int:
     )
     parser.add_argument("--min-pair-speedup", type=float, default=1.2)
     parser.add_argument("--min-geomean-speedup", type=float, default=1.2)
-    parser.add_argument("--time-field", choices=["real_time", "cpu_time"], default="real_time")
+    parser.add_argument("--time-field", choices=["real_time", "cpu_time"], default=EXTERNAL_CORE_TIME_FIELD)
     parser.add_argument("--allow-slower-pairs", action="store_true")
     parser.add_argument("--require-core-pairs", action="store_true")
     parser.add_argument("--output-md")

@@ -120,6 +120,7 @@ auto union_offset_solution(Paths64& solution,
     union_options.fill_rule = paths_reversed ? FillRule::Negative : FillRule::Positive;
     union_options.options.preserve_collinear = options.preserve_collinear;
     union_options.options.reverse_solution = options.reverse_solution != paths_reversed;
+    union_options.options.intersection_policy = options.intersection_policy;
     union_options.decompose_disjoint_components = false;
 
     if (solution_tree) {

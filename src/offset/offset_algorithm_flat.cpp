@@ -96,6 +96,7 @@ auto union_offset_solution(path_set64& solution,
     request.subjects = borrow_paths64(solution.view());
     request.options.preserve_collinear = options.preserve_collinear;
     request.options.reverse_solution = options.reverse_solution != paths_reversed;
+    request.options.intersection_policy = options.intersection_policy;
     request.limits.maximum_input_path_count = solution.size();
     request.limits.maximum_input_point_count = solution.point_count();
     const auto union_result = clip_topology_checked(request, make_topology_writer64(writer));

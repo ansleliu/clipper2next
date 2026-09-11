@@ -8,6 +8,7 @@
 #include "clipper2next/api/execution.h"
 #include "clipper2next/polygon/poly_tree.h"
 #include "clipper2next/core/path_set.h"
+#include "clipper2next/geometry/line_intersections.h"
 #include "support/private/engine_resource_plan.h"
 
 namespace clipper2next::internal {
@@ -19,8 +20,8 @@ struct offset_algorithm_options final {
     bool preserve_collinear{false};
     bool reverse_solution{false};
     bool check_input_coordinate_range{false};
-    geotypes::CoordinateRounding coordinate_rounding{
-        geotypes::CoordinateRounding::NearestEven};
+    geotypes::CoordinateRounding coordinate_rounding{geotypes::CoordinateRounding::NearestEven};
+    predicate_policy intersection_policy{};
 };
 
 auto execute_offset_algorithm(offset_state& state,

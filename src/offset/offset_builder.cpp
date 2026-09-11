@@ -9,9 +9,7 @@
 
 namespace clipper2next {
 
-namespace {
-
-}  // namespace
+namespace {}  // namespace
 
 struct offset_builder::impl final {
     std::vector<internal::offset_group> groups{};
@@ -51,19 +49,19 @@ struct offset_builder::impl final {
 
     auto execute(Paths64& solution, PolyTree64* solution_tree) const -> void {
         internal::offset_state state;
-        internal::execute_offset_algorithm(
-            state,
-            groups,
-            delta,
-            solution,
-            solution_tree,
-            internal::offset_algorithm_options{
-                .miter_limit = miter_limit,
-                .arc_tolerance = arc_tolerance,
-                .preserve_collinear = options.preserve_collinear,
-                .reverse_solution = options.reverse_solution,
-            },
-            delta_callback_ref{delta_callback});
+        internal::execute_offset_algorithm(state,
+                                           groups,
+                                           delta,
+                                           solution,
+                                           solution_tree,
+                                           internal::offset_algorithm_options{
+                                               .miter_limit = miter_limit,
+                                               .arc_tolerance = arc_tolerance,
+                                               .preserve_collinear = options.preserve_collinear,
+                                               .reverse_solution = options.reverse_solution,
+                                               .intersection_policy = options.intersection_policy,
+                                           },
+                                           delta_callback_ref{delta_callback});
     }
 };
 

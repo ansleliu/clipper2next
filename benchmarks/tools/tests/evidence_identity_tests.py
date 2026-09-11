@@ -28,6 +28,21 @@ def run_git(root: Path, *arguments: str) -> str:
 
 
 class EvidenceIdentityTests(unittest.TestCase):
+    def test_nested_source_archive_does_not_claim_its_parent_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            run_git(parent, "init")
+            run_git(parent, "config", "user.name", "Evidence Test")
+            run_git(parent, "config", "user.email", "evidence@example.invalid")
+            (parent / "CMakeLists.txt").write_text("project(parent)\n", encoding="utf-8")
+            run_git(parent, "add", ".")
+            run_git(parent, "commit", "-m", "parent")
+            archive = parent / "source-archive"
+            archive.mkdir()
+            (archive / "CMakeLists.txt").write_text("project(archive)\n", encoding="utf-8")
+            self.assertIsNone(git_repository_identity(archive))
+            self.assertIsNotNone(candidate_source_identity(archive))
+
     def test_protocol_identity_matches_the_committed_file_set(self) -> None:
         names = (
             "benchmarks/tools/runners/run_calibrated_external_performance_gate.py",

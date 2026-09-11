@@ -18,6 +18,31 @@ def write_benchmark(path: Path, benchmarks: list[dict]) -> None:
 
 
 class ExternalBenchmarkVarianceGateTests(unittest.TestCase):
+    def test_wall_clock_noise_cannot_hide_behind_quiet_cpu_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "candidate.json"
+            write_benchmark(candidate,[{"name":"BM_external_next/tiger_cv",
+                "cpu_time":0.01,"real_time":0.20,"aggregate_unit":"percentage"}])
+            result = self.run_gate(candidate)
+            self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+
+    def test_large_fraction_cv_is_not_misread_as_a_small_percent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "candidate.json"
+            write_benchmark(candidate,[{"name":"BM_external_next/tiger_cv",
+                "cpu_time":1.5,"real_time":1.5,"aggregate_unit":"percentage"}])
+            result = self.run_gate(candidate)
+            self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+
+    def test_invalid_cv_values_are_rejected(self) -> None:
+        for value in (float('nan'),float('inf'),-0.1):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                candidate = Path(tmp) / "candidate.json"
+                write_benchmark(candidate,[{"name":"BM_external_next/tiger_cv",
+                    "cpu_time":0.01,"real_time":value,"aggregate_unit":"percentage"}])
+                result = self.run_gate(candidate)
+                self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+
     def run_gate(self, path: Path, *extra: str, calibrated: bool = True) -> subprocess.CompletedProcess:
         env = os.environ.copy()
         if calibrated:
@@ -37,15 +62,15 @@ class ExternalBenchmarkVarianceGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             candidate = Path(tmp) / "candidate.json"
             write_benchmark(candidate, [
-                {"name": "BM_external_next/tiger_mean", "cpu_time": 10.0},
+                {"name": "BM_external_next/tiger_mean", "real_time": 10.0},
                 {
                     "name": "BM_external_next/tiger_cv",
-                    "cpu_time": 0.025,
+                    "real_time": 0.025,
                     "aggregate_unit": "percentage",
                 },
                 {
                     "name": "BM_external_next_batch/tiger_cv",
-                    "cpu_time": 0.04,
+                    "real_time": 0.04,
                     "aggregate_unit": "percentage",
                 },
             ])
@@ -61,12 +86,12 @@ class ExternalBenchmarkVarianceGateTests(unittest.TestCase):
             write_benchmark(candidate, [
                 {
                     "name": "BM_external_next/tiger_cv",
-                    "cpu_time": 0.02,
+                    "real_time": 0.02,
                     "aggregate_unit": "percentage",
                 },
                 {
                     "name": "BM_external_next_batch/tiger_cv",
-                    "cpu_time": 0.18,
+                    "real_time": 0.18,
                     "aggregate_unit": "percentage",
                 },
             ])
@@ -85,12 +110,12 @@ class ExternalBenchmarkVarianceGateTests(unittest.TestCase):
             write_benchmark(candidate, [
                 {
                     "name": "BM_external_next/tiger_cv",
-                    "cpu_time": 0.02,
+                    "real_time": 0.02,
                     "aggregate_unit": "percentage",
                 },
                 {
                     "name": "BM_external_next_batch/tiger_cv",
-                    "cpu_time": 0.18,
+                    "real_time": 0.18,
                     "aggregate_unit": "percentage",
                 },
             ])
@@ -121,7 +146,7 @@ class ExternalBenchmarkVarianceGateTests(unittest.TestCase):
             write_benchmark(candidate, [
                 {
                     "name": "BM_external_next/tiger_cv",
-                    "cpu_time": 0.02,
+                    "real_time": 0.02,
                     "aggregate_unit": "percentage",
                 },
             ])
@@ -138,7 +163,7 @@ class ExternalBenchmarkVarianceGateTests(unittest.TestCase):
             write_benchmark(candidate, [
                 {
                     "name": "BM_external_next/geometry_corpus_cv",
-                    "cpu_time": 0.02,
+                    "real_time": 0.02,
                     "aggregate_unit": "percentage",
                 },
             ])

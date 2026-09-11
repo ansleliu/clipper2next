@@ -27,12 +27,13 @@ struct borrowed_paths64_access final {
         return paths.path_count_(paths.source_, result);
     }
 
-    [[nodiscard]] static auto measure_path(const borrowed_paths64& paths,
-                                           std::size_t path_index,
-                                        path_source_contract::borrowed_path_measurement64& result) noexcept
-        -> clipper_error_code {
+    [[nodiscard]] static auto measure_path(
+        const borrowed_paths64& paths,
+        std::size_t path_index,
+        path_source_contract::borrowed_path_measurement64& result,
+        const bool allow_open = false) noexcept -> clipper_error_code {
         if (paths.flat_kind_ != borrowed_paths64::flat_descriptor_kind::none) {
-            const auto source = flat_path(paths, path_index);
+            const auto source = flat_path(paths, path_index, allow_open);
             if (!source) { return source.error(); }
             result = {};
             result.source_point_count = source->size();
@@ -64,10 +65,11 @@ struct borrowed_paths64_access final {
                                         std::size_t destination_capacity,
                                         std::size_t expected_normalized_count,
                                         std::size_t& normalized_count,
-                                        std::size_t& point_write_count) noexcept
+                                        std::size_t& point_write_count,
+                                        const bool allow_open = false) noexcept
         -> clipper_error_code {
         if (paths.flat_kind_ != borrowed_paths64::flat_descriptor_kind::none) {
-            const auto source = flat_path(paths, path_index);
+            const auto source = flat_path(paths, path_index, allow_open);
             if (!source) { return source.error(); }
             if (source->size() != destination_capacity) {
                 return clipper_error_code::input_changed;
@@ -87,8 +89,8 @@ struct borrowed_paths64_access final {
                     first = point;
                     has_point = true;
                 }
-                *reinterpret_cast<Point64*>(
-                    destination_bytes + point_write_count * destination_stride) =
+                *reinterpret_cast<Point64*>(destination_bytes +
+                                            point_write_count * destination_stride) =
                     Point64{point.x, point.y};
                 last = point;
                 ++point_write_count;
@@ -96,8 +98,8 @@ struct borrowed_paths64_access final {
             normalized_count = point_write_count;
             if (normalized_count > 1U && last == first) { --normalized_count; }
             return normalized_count == expected_normalized_count
-                ? clipper_error_code::ok
-                : clipper_error_code::input_changed;
+                       ? clipper_error_code::ok
+                       : clipper_error_code::input_changed;
         }
         if (!is_bound(paths)) { return clipper_error_code::input_changed; }
         return paths.copy_path_(paths.source_,
@@ -112,7 +114,8 @@ struct borrowed_paths64_access final {
 
 private:
     [[nodiscard]] static auto flat_path(const borrowed_paths64& paths,
-                                        const std::size_t path_index) noexcept
+                                        const std::size_t path_index,
+                                        const bool allow_open) noexcept
         -> clipper_result<std::span<const geotypes::Point2i64>> {
         if (path_index >= paths.flat_descriptor_count_) {
             return make_clipper_error<std::span<const geotypes::Point2i64>>(
@@ -122,27 +125,23 @@ private:
         auto count = std::size_t{};
         if (paths.flat_kind_ == borrowed_paths64::flat_descriptor_kind::path) {
             const auto& descriptor =
-                static_cast<const geotypes::PathDescriptor*>(
-                    paths.flat_descriptors_)[path_index];
-            if (descriptor.closure == geotypes::PathClosure::Open) {
+                static_cast<const geotypes::PathDescriptor*>(paths.flat_descriptors_)[path_index];
+            if (descriptor.closure == geotypes::PathClosure::Open && !allow_open) {
                 return make_clipper_error<std::span<const geotypes::Point2i64>>(
                     clipper_error_code::non_pair_input);
             }
             offset = descriptor.pointOffset;
             count = descriptor.pointCount;
-        } else if (paths.flat_kind_ ==
-                   borrowed_paths64::flat_descriptor_kind::ring) {
+        } else if (paths.flat_kind_ == borrowed_paths64::flat_descriptor_kind::ring) {
             const auto& descriptor =
-                static_cast<const geotypes::RingDescriptor*>(
-                    paths.flat_descriptors_)[path_index];
+                static_cast<const geotypes::RingDescriptor*>(paths.flat_descriptors_)[path_index];
             offset = descriptor.pointOffset;
             count = descriptor.pointCount;
         } else {
             return make_clipper_error<std::span<const geotypes::Point2i64>>(
                 clipper_error_code::input_changed);
         }
-        if (offset > paths.flat_points_.size() ||
-            count > paths.flat_points_.size() - offset) {
+        if (offset > paths.flat_points_.size() || count > paths.flat_points_.size() - offset) {
             return make_clipper_error<std::span<const geotypes::Point2i64>>(
                 clipper_error_code::input_changed);
         }
@@ -174,10 +173,8 @@ struct topology_writer64_access final {
         return writer.acquire_(writer.writer_, ring, destination);
     }
 
-    [[nodiscard]] static auto finish(topology_writer64& writer) noexcept
-        -> clipper_error_code {
-        return is_bound(writer) ? writer.finish_(writer.writer_)
-                                : clipper_error_code::sink_failure;
+    [[nodiscard]] static auto finish(topology_writer64& writer) noexcept -> clipper_error_code {
+        return is_bound(writer) ? writer.finish_(writer.writer_) : clipper_error_code::sink_failure;
     }
 
     static auto cancel(topology_writer64& writer) noexcept -> void {

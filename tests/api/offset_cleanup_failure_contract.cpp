@@ -82,11 +82,13 @@ int main() {
     const auto source = next::Paths64{
         next::Path64{{0, 0}, {100, 0}, {100, 100}, {0, 100}},
     };
+    auto request_group = next::borrowed_offset_group64{};
     auto request = next::borrowed_offset_request64{};
-    request.paths = next::borrow_paths64(source);
+    request.groups = std::span{&request_group, 1U};
+    request_group.paths = next::borrow_paths64(source);
     request.delta = -5.0;
-    request.join_type = next::JoinType::Miter;
-    request.end_type = next::EndType::Polygon;
+    request_group.join_type = next::JoinType::Miter;
+    request_group.end_type = next::EndType::Polygon;
 
     const auto reference = next::offset_stage_checked(request);
     if (!reference || reference->paths.empty()) { return 10; }
