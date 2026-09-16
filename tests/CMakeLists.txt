@@ -135,24 +135,21 @@ foreach(clipper2next_product_source IN LISTS clipper2next_product_sources)
       "${PROJECT_SOURCE_DIR}/${clipper2next_product_source}")
   endif()
 endforeach()
-add_library(clipper2next_internal_test_support STATIC
-  ${clipper2next_internal_test_sources}
-)
-target_compile_features(clipper2next_internal_test_support PUBLIC cxx_std_23)
-target_link_libraries(clipper2next_internal_test_support
-  PUBLIC clipper2next::geotypes
-)
-target_include_directories(clipper2next_internal_test_support
-  PUBLIC ${PROJECT_SOURCE_DIR}/include
-  PRIVATE ${PROJECT_SOURCE_DIR}/src
-)
-target_compile_definitions(clipper2next_internal_test_support
-  PRIVATE
+function(clipper2next_add_internal_test_support target)
+  add_library(${target} STATIC ${clipper2next_internal_test_sources})
+  target_compile_features(${target} PUBLIC cxx_std_23)
+  target_link_libraries(${target} PUBLIC clipper2next::geotypes)
+  target_include_directories(${target}
+    PUBLIC ${PROJECT_SOURCE_DIR}/include
+    PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(${target} PRIVATE
     CLIPPER2NEXT_BUILDING_LIBRARY
-    $<$<BOOL:${CLIPPER2NEXT_ENABLE_CLEANUP_LOCAL_COMPACT}>:CLIPPER2NEXT_USE_CLEANUP_LOCAL_COMPACT>
-)
-clipper2next_target_warnings(clipper2next_internal_test_support)
-clipper2next_target_sanitizers(clipper2next_internal_test_support)
+    $<$<BOOL:${CLIPPER2NEXT_ENABLE_CLEANUP_LOCAL_COMPACT}>:CLIPPER2NEXT_USE_CLEANUP_LOCAL_COMPACT>)
+  clipper2next_target_warnings(${target})
+  clipper2next_target_sanitizers(${target})
+endfunction()
+
+clipper2next_add_internal_test_support(clipper2next_internal_test_support)
 
 foreach(clipper2next_gtest_target IN ITEMS gtest gtest_main)
   if(TARGET ${clipper2next_gtest_target})
@@ -310,9 +307,20 @@ add_executable(
   clipper2next_offset_cleanup_failure_contract
   api/offset_cleanup_failure_contract.cpp
 )
+set(clipper2next_oom_support clipper2next_internal_test_support)
+if(MSVC AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+  # MSVC's checked-iterator proxy allocation occurs inside noexcept STL
+  # constructors. Global new failure there terminates before library catches
+  # can execute. Only this fault-injection probe uses regular STL bookkeeping;
+  # the product DLL and all other Debug tests keep their default iterator ABI.
+  clipper2next_add_internal_test_support(clipper2next_oom_test_support)
+  target_compile_definitions(clipper2next_oom_test_support
+    PUBLIC _ITERATOR_DEBUG_LEVEL=0)
+  set(clipper2next_oom_support clipper2next_oom_test_support)
+endif()
 target_link_libraries(
   clipper2next_offset_cleanup_failure_contract
-  PRIVATE clipper2next_internal_test_support
+  PRIVATE ${clipper2next_oom_support}
 )
 target_compile_features(
   clipper2next_offset_cleanup_failure_contract PRIVATE cxx_std_23

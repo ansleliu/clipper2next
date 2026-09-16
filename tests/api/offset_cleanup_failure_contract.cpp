@@ -2,12 +2,21 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <new>
+
+#if defined(_MSC_VER)
+static_assert(_ITERATOR_DEBUG_LEVEL == 0,
+              "Global OOM injection must not target noexcept checked-iterator proxy allocations");
+#endif
 
 namespace {
 
 std::atomic<std::ptrdiff_t> allocationsBeforeFailure{-1};
+std::ptrdiff_t activeOrdinal{-1};
+const char* activePhase = "setup";
 
 [[nodiscard]] auto shouldFailAllocation() noexcept -> bool {
     auto remaining = allocationsBeforeFailure.load(std::memory_order_relaxed);
@@ -78,6 +87,16 @@ void operator delete[](void* const pointer, const std::nothrow_t& tag) noexcept 
 }
 
 int main() {
+    std::set_terminate([] {
+        std::fprintf(stderr, "terminated: ordinal=%td phase=%s remaining=%td\n",
+                     activeOrdinal, activePhase, allocationsBeforeFailure.load());
+        if (const auto failure = std::current_exception()) {
+            try { std::rethrow_exception(failure); }
+            catch (const std::exception& error) { std::fprintf(stderr, "%s\n", error.what()); }
+            catch (...) { std::fprintf(stderr, "non-standard exception\n"); }
+        }
+        std::_Exit(90);
+    });
     namespace next = clipper2next;
     const auto source = next::Paths64{
         next::Path64{{0, 0}, {100, 0}, {100, 100}, {0, 100}},
@@ -95,10 +114,13 @@ int main() {
 
     auto observedAllocationFailure = false;
     for (auto ordinal = std::ptrdiff_t{}; ordinal < 256; ++ordinal) {
+        activeOrdinal = ordinal;
         auto result = next::expected_borrowed_offset_stage_result64{};
         {
             const auto failure = ScopedAllocationFailure{ordinal};
+            activePhase = "API invocation / assignment";
             result = next::offset_stage_checked(request);
+            activePhase = "API returned";
         }
         if (result && result->paths.empty()) { return 20; }
         if (!result && result.error() == next::clipper_error_code::allocation_failure) {

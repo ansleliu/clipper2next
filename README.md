@@ -259,6 +259,14 @@ Git by policy.
 
 ## Testing
 
+MSVC Debug products and ordinary tests retain their default checked-iterator
+ABI. Only the global-allocation OOM probe and its noninstalled static test
+implementation use `_ITERATOR_DEBUG_LEVEL=0`: MSVC's iterator-proxy allocation
+inside `noexcept` STL constructors otherwise terminates before an exception
+can reach the library boundary. The probe qualifies recoverable storage
+allocation failures, not recovery from that Debug-runtime termination.
+Legacy geometry comparisons continue to use the normal product Debug ABI.
+
 The product test suite uses GoogleTest. Differential oracle tests compare
 observable results with Clipper2 and remain isolated from the installed
 production target. Google Benchmark, sanitizer, ThreadSanitizer, fuzz-smoke, and
