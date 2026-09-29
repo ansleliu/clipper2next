@@ -18,6 +18,19 @@ target_compile_features(clipper2next_install_smoke PRIVATE cxx_std_23)
 
 enable_testing()
 add_test(NAME clipper2next_install_smoke COMMAND clipper2next_install_smoke)
+add_executable(clipper2next_geotypes_only_smoke geotypes_only.cpp)
+target_link_libraries(clipper2next_geotypes_only_smoke PRIVATE clipper2next::geotypes)
+add_test(NAME clipper2next_geotypes_only_smoke COMMAND clipper2next_geotypes_only_smoke)
+if(WIN32)
+  find_program(geotypes_runtime_inspector NAMES dumpbin REQUIRED)
+else()
+  find_program(geotypes_runtime_inspector NAMES readelf llvm-readelf REQUIRED)
+endif()
+add_test(NAME clipper2next_geotypes_only_runtime
+  COMMAND "${CMAKE_COMMAND}"
+    "-DBINARY=$<TARGET_FILE:clipper2next_geotypes_only_smoke>"
+    "-DINSPECTOR=${geotypes_runtime_inspector}"
+    -P "${CMAKE_CURRENT_LIST_DIR}/verify_geotypes_runtime.cmake")
 if(WIN32)
   set_tests_properties(clipper2next_install_smoke PROPERTIES
     ENVIRONMENT_MODIFICATION

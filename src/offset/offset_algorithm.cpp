@@ -162,7 +162,7 @@ void execute_offset_algorithm_impl(offset_state& state,
     if (solution.empty()) { return; }
     if (!offset_solution_in_range(solution)) {
         solution.clear();
-        return;
+        raise_clipper_error(clipper_error_code::coordinate_range);
     }
 
     const auto paths_reversed = check_reverse_orientation(groups);

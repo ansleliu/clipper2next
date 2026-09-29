@@ -11,6 +11,8 @@ namespace clipper2next {
 
 [[nodiscard]] CLIPPER2NEXT_API auto offset(const offset_request64& request)
     -> paths64_result;
+// Invalid numeric/enumeration parameters fail before empty/small-delta returns.
+// Generation failures are errors, whereas valid erosion may succeed with no paths.
 [[nodiscard]] CLIPPER2NEXT_API auto offset_checked(const offset_request64& request)
     -> expected_paths64_result;
 [[nodiscard]] CLIPPER2NEXT_API auto offset_stage_checked(

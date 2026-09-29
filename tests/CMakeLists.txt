@@ -171,8 +171,11 @@ set(clipper2next_api_test_sources
   api/execution_api_tests.cpp
   api/example_smoke_tests.cpp
   api/geotypes_contract_tests.cpp
+  api/geotypes_validation_tests.cpp
+  api/path_set_builder_contract_tests.cpp
   api/memory_api_tests.cpp
   api/offset_request_api_tests.cpp
+  api/offset_error_contract_tests.cpp
   api/prepared_clip_request_tests.cpp
   api/public_header_tests.cpp
   api/rectclip_request_api_tests.cpp
@@ -181,6 +184,7 @@ set(clipper2next_api_test_sources
 
 set(clipper2next_core_test_sources
   core/canonicalize_tests.cpp
+  core/checked_coordinate_tests.cpp
   core/geometry_algorithms_tests.cpp
   core/geometry_predicates_tests.cpp
   core/scalar_helper_tests.cpp

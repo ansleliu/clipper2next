@@ -1,0 +1,16 @@
+cmake_minimum_required(VERSION 3.24)
+
+if(WIN32)
+  set(inspector_arguments /dependents)
+else()
+  set(inspector_arguments -d)
+endif()
+execute_process(COMMAND "${INSPECTOR}" ${inspector_arguments} "${BINARY}"
+  RESULT_VARIABLE result OUTPUT_VARIABLE dependencies ERROR_VARIABLE diagnostic)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "Cannot inspect geotypes consumer runtime dependencies: ${diagnostic}")
+endif()
+string(TOLOWER "${dependencies}" dependencies)
+if(dependencies MATCHES "clipper2next\\.(dll|so)")
+  message(FATAL_ERROR "geotypes-only consumer depends on the computation library: ${dependencies}")
+endif()

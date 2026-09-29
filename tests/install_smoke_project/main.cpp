@@ -5,6 +5,8 @@
 #include <clipper2next/rectclip.h>
 #include <clipper2next/triangulation.h>
 
+#include <limits>
+
 struct topology_smoke_sink final {
     auto begin(const clipper2next::topology_layout64& layout) -> clipper2next::clipper_error_code {
         expected_ring_count = layout.ring_count;
@@ -108,5 +110,10 @@ int main() {
         return 13;
     }
     if (!topology_result.has_value() || topology_sink.ring_count == 0U) { return 14; }
+    offset_request.delta = std::numeric_limits<double>::quiet_NaN();
+    const auto invalid_offset = clipper2next::offset_checked(offset_request);
+    if (invalid_offset || invalid_offset.error() != clipper2next::clipper_error_code::invalid_argument) {
+        return 17;
+    }
     return 0;
 }

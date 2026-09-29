@@ -6,6 +6,8 @@
 #include <span>
 
 #include "geometry/private/numeric_policy.h"
+#include "clipper2next/api/error.h"
+#include "clipper2next/geotypes/checked_coordinate_cast.hpp"
 #include "clipper2next/offset/types.h"
 
 namespace clipper2next::internal {
@@ -68,15 +70,25 @@ struct offset_arc_parameters final {
     return end_type == EndType::Polygon || end_type == EndType::Joined;
 }
 
+// Floating offset vertices cross this boundary before becoming integer output.
+// Numeric failures here describe generation, not user input.
+[[nodiscard]] inline auto offset_point(const PointD& point,
+                                      geotypes::CoordinateRounding rounding) -> Point64 {
+    const auto result = geotypes::checkedPointCast<std::int64_t>(point, rounding);
+    if (!result || result->x < MIN_COORD || result->x > MAX_COORD ||
+        result->y < MIN_COORD || result->y > MAX_COORD) {
+        raise_clipper_error(clipper_error_code::coordinate_range);
+    }
+    return *result;
+}
+
 [[nodiscard]] inline auto perpendicular_point(const Point64& point,
                                               const PointD& normal,
                                               double delta,
                                               const geotypes::CoordinateRounding rounding =
                                                   geotypes::CoordinateRounding::NearestEven)
     -> Point64 {
-    return {
-        geotypes::coordinateCast<std::int64_t>(point.x + normal.x * delta, rounding),
-        geotypes::coordinateCast<std::int64_t>(point.y + normal.y * delta, rounding)};
+    return offset_point({point.x + normal.x * delta, point.y + normal.y * delta}, rounding);
 }
 
 [[nodiscard]] inline auto perpendicular_point_d(const Point64& point,

@@ -1,4 +1,5 @@
 #include "clipper2next/offset.h"
+#include "clipper2next/core/path_set_builder.h"
 
 #include <atomic>
 #include <cstddef>
@@ -98,6 +99,19 @@ int main() {
         std::_Exit(90);
     });
     namespace next = clipper2next;
+    // begin reserves descriptors then resizes points. Both allocation failures
+    // leave logical contents empty, without requiring active destruction.
+    for (const auto ordinal : {std::ptrdiff_t{0}, std::ptrdiff_t{1}}) {
+        auto owner = next::path_set64{};
+        auto builder = next::path_set_builder64{owner};
+        auto allocationFailed = false;
+        {
+            const auto failure = ScopedAllocationFailure{ordinal};
+            try { builder.begin(2, 2); }
+            catch (const std::bad_alloc&) { allocationFailed = true; }
+        }
+        if (!allocationFailed || !owner.empty() || owner.point_count() != 0) { return 40; }
+    }
     const auto source = next::Paths64{
         next::Path64{{0, 0}, {100, 0}, {100, 100}, {0, 100}},
     };
@@ -127,5 +141,25 @@ int main() {
             observedAllocationFailure = true;
         }
     }
-    return observedAllocationFailure ? 0 : 30;
+    if (!observedAllocationFailure) { return 30; }
+
+    auto owning = next::offset_request64{};
+    owning.paths = source;
+    owning.delta = -5.0;
+    observedAllocationFailure = false;
+    for (auto ordinal = std::ptrdiff_t{}; ordinal < 256; ++ordinal) {
+        activeOrdinal = ordinal;
+        auto result = next::expected_paths64_result{};
+        {
+            const auto failure = ScopedAllocationFailure{ordinal};
+            activePhase = "owning checked invocation / assignment";
+            result = next::offset_checked(owning);
+            activePhase = "owning checked returned";
+        }
+        if (result && result->closed.empty()) { return 50; }
+        if (!result && result.error() == next::clipper_error_code::allocation_failure) {
+            observedAllocationFailure = true;
+        }
+    }
+    return observedAllocationFailure ? 0 : 60;
 }

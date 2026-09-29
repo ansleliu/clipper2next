@@ -1,6 +1,7 @@
 #include "clipper2next/offset/operations.h"
 
 #include "api/private/borrowed_offset_execution.h"
+#include "api/private/offset_request_validation.h"
 
 #include <new>
 #include <stdexcept>
@@ -17,6 +18,10 @@ auto offset_stage_checked(
     const sync_bulk_executor_ref executor)
     -> expected_borrowed_offset_stage_result64 {
     try {
+        const auto error = internal::validate_offset_request(request);
+        if (error != clipper_error_code::ok) {
+            return make_clipper_error<borrowed_offset_stage_result64>(error);
+        }
         return internal::execute_borrowed_offset_stage(request, executor);
     } catch (const std::bad_alloc&) {
         return make_clipper_error<borrowed_offset_stage_result64>(

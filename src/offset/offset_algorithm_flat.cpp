@@ -132,9 +132,10 @@ auto execute_offset_algorithm(offset_state& state,
 
     solution.reserve(calc_solution_capacity(groups), 0U);
     build_offset_groups(state, groups, delta, options, delta_callback, executor, solution);
-    if (solution.empty() || !offset_solution_in_range(solution)) {
+    if (solution.empty()) { return; }
+    if (!offset_solution_in_range(solution)) {
         solution.clear();
-        return;
+        raise_clipper_error(clipper_error_code::coordinate_range);
     }
 
     const auto paths_reversed = check_reverse_orientation(groups);

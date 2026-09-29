@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "offset/private/offset_geometry.h"
+#include "clipper2next/api/error.h"
 #include "support/test_paths.h"
 
 namespace next = clipper2next;
@@ -31,4 +32,13 @@ TEST(Clipper2NextOffsetGeometryTests, ArcParametersUseLegacyDefaultToleranceWhen
     EXPECT_GT(parameters.steps_per_rad, 0.0);
     EXPECT_GT(parameters.step_sin, 0.0);
     EXPECT_LT(parameters.step_cos, 1.0);
+}
+
+TEST(Clipper2NextOffsetGeometryTests, GeneratedNonFiniteCoordinatesCannotBecomeIntegerZero) {
+    const auto nan = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_THROW(static_cast<void>(next::internal::perpendicular_point({0, 0}, {nan, 0}, 1.0)),
+                 next::clipper_error);
+    EXPECT_THROW(static_cast<void>(next::internal::perpendicular_point(
+                     {0, 0}, {1, 0}, std::numeric_limits<double>::infinity())),
+                 next::clipper_error);
 }

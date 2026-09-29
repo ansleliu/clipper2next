@@ -34,6 +34,9 @@ public:
     CLIPPER2NEXT_API auto add(const Paths64& paths) -> offset_builder&;
     CLIPPER2NEXT_API auto clear() -> offset_builder&;
 
+    // Generated coordinates outside the engine domain raise clipper_error with
+    // coordinate_range. Failed execution clears the supplied output; it never
+    // returns a partial result or disguises generated range failure as empty.
     [[nodiscard]] CLIPPER2NEXT_API auto execute() const -> Paths64;
     CLIPPER2NEXT_API auto execute_into(Paths64& solution) const -> void;
     CLIPPER2NEXT_API auto execute_into(PolyTree64& solution) const -> void;

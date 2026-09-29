@@ -110,17 +110,11 @@ auto append_single_point_offset(offset_state& state,
         state.path_out = make_ellipse(point, abs_delta, abs_delta, steps);
     } else {
         const auto delta = std::ceil(abs_delta);
-        const auto makePoint = [rounding = options.coordinate_rounding](
-                                   double x, double y) {
-            return Point64{
-                geotypes::coordinateCast<std::int64_t>(x, rounding),
-                geotypes::coordinateCast<std::int64_t>(y, rounding)};
-        };
         state.path_out = Path64{
-            makePoint(point.x - delta, point.y - delta),
-            makePoint(point.x + delta, point.y - delta),
-            makePoint(point.x + delta, point.y + delta),
-            makePoint(point.x - delta, point.y + delta)};
+            offset_point({point.x - delta, point.y - delta}, options.coordinate_rounding),
+            offset_point({point.x + delta, point.y - delta}, options.coordinate_rounding),
+            offset_point({point.x + delta, point.y + delta}, options.coordinate_rounding),
+            offset_point({point.x - delta, point.y + delta}, options.coordinate_rounding)};
     }
     append_offset_path(output, state.path_out);
 }

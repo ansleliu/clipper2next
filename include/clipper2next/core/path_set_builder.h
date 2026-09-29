@@ -12,6 +12,11 @@
 namespace clipper2next {
 
 template <typename Coordinate>
+// Writes an unpublished candidate. begin discards old contents; acquire/finish
+// failures leave the candidate active until cancel or active destruction.
+// finish commits the builder, not the enclosing operation. cancel clears logical
+// contents but may retain capacity. The owner must outlive this builder and must
+// not be changed externally while acquired spans are in use.
 class basic_path_set_builder final {
 public:
     using owner_type = basic_path_set<Coordinate>;

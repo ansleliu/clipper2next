@@ -38,8 +38,8 @@ inline auto append_bevel(Path64& output,
         second_point = PointD(path[vertex_index].x + group_delta * normals[vertex_index].x,
                               path[vertex_index].y + group_delta * normals[vertex_index].y);
     }
-    output.emplace_back(geotypes::pointCast<std::int64_t>(first_point, rounding));
-    output.emplace_back(geotypes::pointCast<std::int64_t>(second_point, rounding));
+    output.emplace_back(offset_point(first_point, rounding));
+    output.emplace_back(offset_point(second_point, rounding));
 }
 
 inline auto append_square(Path64& output,
@@ -73,9 +73,9 @@ inline auto append_square(Path64& output,
                 first_line, second_line, previous_offset, previous_edge, intersection)) {
             intersection = mid_point;
         }
-        output.emplace_back(geotypes::pointCast<std::int64_t>(
+        output.emplace_back(offset_point(
             reflect_point(intersection, mid_point), rounding));
-        output.emplace_back(geotypes::pointCast<std::int64_t>(intersection, rounding));
+        output.emplace_back(offset_point(intersection, rounding));
     } else {
         const auto current_offset = internal::perpendicular_point_d(
             path[vertex_index], normals[previous_index], group_delta);
@@ -84,8 +84,8 @@ inline auto append_square(Path64& output,
                 first_line, second_line, previous_offset, current_offset, intersection)) {
             intersection = mid_point;
         }
-        output.emplace_back(geotypes::pointCast<std::int64_t>(intersection, rounding));
-        output.emplace_back(geotypes::pointCast<std::int64_t>(
+        output.emplace_back(offset_point(intersection, rounding));
+        output.emplace_back(offset_point(
             reflect_point(intersection, mid_point), rounding));
     }
 }
@@ -100,15 +100,9 @@ inline auto append_miter(Path64& output,
                          const geotypes::CoordinateRounding rounding =
                              geotypes::CoordinateRounding::NearestEven) -> void {
     const auto q = group_delta / (cos_a + 1);
-    output.emplace_back(geotypes::Point2i64{
-        geotypes::coordinateCast<std::int64_t>(
-            path[vertex_index].x +
-            (normals[previous_index].x + normals[vertex_index].x) * q,
-            rounding),
-        geotypes::coordinateCast<std::int64_t>(
-            path[vertex_index].y +
-            (normals[previous_index].y + normals[vertex_index].y) * q,
-            rounding)});
+    output.emplace_back(offset_point({
+        path[vertex_index].x + (normals[previous_index].x + normals[vertex_index].x) * q,
+        path[vertex_index].y + (normals[previous_index].y + normals[vertex_index].y) * q}, rounding));
 }
 
 inline auto append_round(Path64& output,
@@ -126,16 +120,12 @@ inline auto append_round(Path64& output,
         PointD(normals[previous_index].x * group_delta, normals[previous_index].y * group_delta);
     if (vertex_index == previous_index) { offset_vector = negated(offset_vector); }
 
-    output.emplace_back(geotypes::Point2i64{
-        geotypes::coordinateCast<std::int64_t>(point.x + offset_vector.x, rounding),
-        geotypes::coordinateCast<std::int64_t>(point.y + offset_vector.y, rounding)});
+    output.emplace_back(offset_point({point.x + offset_vector.x, point.y + offset_vector.y}, rounding));
     const auto steps = arc_step_count(arc, angle);
     for (std::size_t step = 1; step < steps; ++step) {
         offset_vector = PointD(offset_vector.x * arc.step_cos - arc.step_sin * offset_vector.y,
                                offset_vector.x * arc.step_sin + offset_vector.y * arc.step_cos);
-        output.emplace_back(geotypes::Point2i64{
-            geotypes::coordinateCast<std::int64_t>(point.x + offset_vector.x, rounding),
-            geotypes::coordinateCast<std::int64_t>(point.y + offset_vector.y, rounding)});
+        output.emplace_back(offset_point({point.x + offset_vector.x, point.y + offset_vector.y}, rounding));
     }
     internal::append_perpendicular(
         output, path[vertex_index], normals[vertex_index], group_delta, rounding);

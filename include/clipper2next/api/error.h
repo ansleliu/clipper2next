@@ -20,6 +20,7 @@ enum class clipper_error_code {
     executor_failure,
     sink_failure,
     internal_error,
+    invalid_argument,
 };
 
 [[nodiscard]] inline constexpr auto clipper_error_message(clipper_error_code code) noexcept -> const
@@ -60,6 +61,9 @@ enum class clipper_error_code {
     }
     case clipper_error_code::internal_error: {
         return "There is an undefined error in clipper2next";
+    }
+    case clipper_error_code::invalid_argument: {
+        return "Invalid request argument";
     }
     }
     return "Unknown error";

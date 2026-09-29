@@ -48,15 +48,30 @@ TEST(Clipper2NextOffsetBuilderTests, RoundPointHonorsLegacyArcTolerance) {
     }
 }
 
-TEST(Clipper2NextOffsetBuilderTests, UnrepresentableFiniteDeltaProducesNoGeometry) {
+TEST(Clipper2NextOffsetBuilderTests, UnrepresentableFiniteDeltaReportsCoordinateRange) {
     const next::Path64 point_path{{10, 10}};
+    try {
+        static_cast<void>(next::offset_builder{}
+                              .delta((std::numeric_limits<double>::max)())
+                              .join(next::JoinType::Miter)
+                              .add(point_path)
+                              .execute());
+        FAIL() << "generated coordinates must fit the engine domain";
+    } catch (const next::clipper_error& error) {
+        EXPECT_EQ(error.code(), next::clipper_error_code::coordinate_range);
+    }
+}
 
-    EXPECT_TRUE(next::offset_builder{}
-                    .delta((std::numeric_limits<double>::max)())
-                    .join(next::JoinType::Miter)
-                    .add(point_path)
-                    .execute()
-                    .empty());
+TEST(Clipper2NextOffsetBuilderTests, GeneratedRangeFailureDoesNotLeavePartialOutput) {
+    const next::Path64 square{{0, 0}, {100, 0}, {100, 100}, {0, 100}};
+    const next::Path64 outgrowing_point{{next::MAX_COORD - 1024, 0}};
+    const auto builder = next::offset_builder{}.delta(8192).add(square).add(outgrowing_point);
+    next::Paths64 output;
+    EXPECT_THROW(builder.execute_into(output), next::clipper_error);
+    EXPECT_TRUE(output.empty());
+    next::PolyTree64 tree;
+    EXPECT_THROW(builder.execute_into(tree), next::clipper_error);
+    EXPECT_EQ(tree.count(), 0U);
 }
 
 TEST(Clipper2NextOffsetBuilderTests, NonFiniteDeltaCallbackCannotEscapeToCoordinates) {

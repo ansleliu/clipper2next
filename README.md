@@ -18,6 +18,14 @@ ranges, flat path sets, and streaming topology output.
 
 The project is tested on Windows with MSVC and on Linux with GCC 13.
 
+Version 6.1.0 adds checked GeoTypes coordinate conversion, integer arithmetic,
+and explicit structural validation without changing the existing point layouts
+or saturating operators. Checked offset requests reject invalid parameters and
+report generated coordinate failures instead of successful empty geometry.
+Direct offset builders report generated range failures through `clipper_error`
+and clear failed output. Valid empty results and the strict Clipper2 geometry
+equivalence contract remain unchanged.
+
 Version 6.0.0 starts a new ABI generation for borrowed offset groups. One request
 borrows all groups through completion and performs one shared generation/cleanup
 operation. The shared library uses SONAME 6; 5.x consumers must rebuild and
@@ -25,11 +33,12 @@ migrate the former single-group request fields. No dual ABI or compatibility
 shim is shipped. The default algorithm retains the strict legacy Clipper2
 result contract.
 
-For this release, Windows performance-variance qualification is deferred by an
-explicit release decision. The retained Windows measurements meet the 1.2x
-speedup floor but are **NOISY** against the unchanged 5% wall-time CV gate.
-Linux performance qualification passes. This exception does not waive geometry
-correctness, strict legacy equivalence, installation, or export-boundary gates.
+The 6.0.0 performance qualification deferred Windows variance acceptance: its
+retained measurements met the 1.2x speedup floor but were **NOISY** against the
+unchanged 5% wall-time CV gate; Linux performance qualification passed. Version
+6.1.0 makes no new performance or speedup qualification claim. Geometry
+correctness, strict legacy equivalence, installation, and export-boundary gates
+remain required.
 
 ## Build
 

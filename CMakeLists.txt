@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(clipper2next VERSION 6.0.0 LANGUAGES CXX)
+project(clipper2next VERSION 6.1.0 LANGUAGES CXX)
 
 if(NOT CMAKE_GENERATOR STREQUAL "Ninja")
   message(FATAL_ERROR
@@ -153,6 +153,9 @@ target_sources(clipper2next_geotypes
     FILES
       include/clipper2next/geotypes/geotypes.hpp
       include/clipper2next/geotypes/coordinate.hpp
+      include/clipper2next/geotypes/checked_coordinate.hpp
+      include/clipper2next/geotypes/checked_coordinate_cast.hpp
+      include/clipper2next/geotypes/checked_coordinate_arithmetic.hpp
       include/clipper2next/geotypes/coordinate_arithmetic.hpp
       include/clipper2next/geotypes/coordinate_cast.hpp
       include/clipper2next/geotypes/coordinate_midpoint.hpp
@@ -160,6 +163,7 @@ target_sources(clipper2next_geotypes
       include/clipper2next/geotypes/point.hpp
       include/clipper2next/geotypes/rect.hpp
       include/clipper2next/geotypes/topology.hpp
+      include/clipper2next/geotypes/validation.hpp
 )
 
 add_library(clipper2next SHARED)
@@ -345,6 +349,7 @@ target_sources(clipper2next
     FILES
       src/api/private/borrowed_topology_pipeline.h
       src/api/private/borrowed_offset_execution.h
+      src/api/private/offset_request_validation.h
       src/support/private/engine_resource_plan.h
       src/batch/private/batch_clip_executor.h
       src/clip/engine/private/engine_active_list.h
