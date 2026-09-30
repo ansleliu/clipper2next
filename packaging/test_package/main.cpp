@@ -28,5 +28,25 @@ int main() {
     if (invalid || invalid.error() != clipper2next::clipper_error_code::invalid_argument) {
         return 4;
     }
+    offset_request.paths = {{{0, 0}}};
+    offset_request.delta = 0x1p63;
+    offset_request.join_type = clipper2next::JoinType::Round;
+    offset_request.end_type = clipper2next::EndType::Round;
+    offset_request.arc_segments_per_quadrant = 8U;
+    const auto range_failure = clipper2next::offset_checked(offset_request);
+    if (range_failure || range_failure.error() != clipper2next::clipper_error_code::coordinate_range) {
+        return 5;
+    }
+    const auto group = clipper2next::borrowed_offset_group64{
+        clipper2next::borrow_paths64(offset_request.paths),
+        clipper2next::JoinType::Round, clipper2next::EndType::Round};
+    auto borrowed = clipper2next::borrowed_offset_request64{};
+    borrowed.groups = std::span{&group, 1U};
+    borrowed.delta = offset_request.delta;
+    borrowed.arc_segments_per_quadrant = offset_request.arc_segments_per_quadrant;
+    const auto borrowed_failure = clipper2next::offset_stage_checked(borrowed);
+    if (borrowed_failure || borrowed_failure.error() != clipper2next::clipper_error_code::coordinate_range) {
+        return 6;
+    }
     return 0;
 }

@@ -108,6 +108,9 @@ auto append_single_point_offset(offset_state& state,
     if (group.join_type == JoinType::Round) {
         const auto steps = arc_step_count(state.arc, 2 * pi);
         state.path_out = make_ellipse(point, abs_delta, abs_delta, steps);
+        // A finite radius >= 1 must generate a circle; empty signals an
+        // unrepresentable ellipse, not a successful empty offset.
+        if (state.path_out.empty()) { raise_clipper_error(clipper_error_code::coordinate_range); }
     } else {
         const auto delta = std::ceil(abs_delta);
         state.path_out = Path64{

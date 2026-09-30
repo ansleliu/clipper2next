@@ -1,3 +1,3 @@
 #pragma once
 
-constexpr auto CLIPPER2NEXT_VERSION = "6.1.0";
+constexpr auto CLIPPER2NEXT_VERSION = "6.1.1";

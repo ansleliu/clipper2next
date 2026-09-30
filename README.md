@@ -18,6 +18,11 @@ ranges, flat path sets, and streaming topology output.
 
 The project is tested on Windows with MSVC and on Linux with GCC 13.
 
+Version 6.1.1 fixes single-point Round offsets whose circle cannot be represented.
+Both owning and borrowed checked entry points return `coordinate_range` instead
+of successful empty geometry. Circle sampling, rounding, and valid empty results
+retain their existing semantics.
+
 Version 6.1.0 adds checked GeoTypes coordinate conversion, integer arithmetic,
 and explicit structural validation without changing the existing point layouts
 or saturating operators. Checked offset requests reject invalid parameters and
@@ -36,7 +41,7 @@ result contract.
 The 6.0.0 performance qualification deferred Windows variance acceptance: its
 retained measurements met the 1.2x speedup floor but were **NOISY** against the
 unchanged 5% wall-time CV gate; Linux performance qualification passed. Version
-6.1.0 makes no new performance or speedup qualification claim. Geometry
+6.1.x makes no new performance or speedup qualification claim. Geometry
 correctness, strict legacy equivalence, installation, and export-boundary gates
 remain required.
 
