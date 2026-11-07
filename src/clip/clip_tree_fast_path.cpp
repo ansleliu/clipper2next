@@ -1,28 +1,11 @@
 #include "clipper2next/clip.h"
 
+#include "clip/engine/private/polygon_tree_rebuild_access.h"
+#include "geometry/private/rectangle_certificate.h"
 #include <algorithm>
 #include <array>
-#include <optional>
 
 namespace clipper2next::internal {
-namespace {
-
-[[nodiscard]] auto path_as_axis_aligned_rect(const Path64& path) -> std::optional<Rect64> {
-    if (path.size() != 4U) { return std::nullopt; }
-    const auto rect = bounds(path);
-    if (rect.is_empty()) { return std::nullopt; }
-    const std::array<Point64, 4U> corners{Point64{rect.left, rect.top},
-                                          Point64{rect.right, rect.top},
-                                          Point64{rect.right, rect.bottom},
-                                          Point64{rect.left, rect.bottom}};
-    for (const auto& corner : corners) {
-        if (std::find(path.begin(), path.end(), corner) == path.end()) { return std::nullopt; }
-    }
-    return rect;
-}
-
-}  // namespace
-
 auto try_execute_nested_rectangle_union_tree(const clip_request64& request,
                                              clip_tree64_result& result) -> bool {
     if (request.clip_type != ClipType::Union || request.fill_rule != FillRule::NonZero ||
@@ -31,18 +14,39 @@ auto try_execute_nested_rectangle_union_tree(const clip_request64& request,
         return false;
     }
 
-    const auto outer_rect = path_as_axis_aligned_rect(request.subjects.front());
-    if (!outer_rect) { return false; }
-    const auto outer_is_positive = is_positive(request.subjects.front());
-    for (const auto& path : request.subjects) {
-        const auto rect = path_as_axis_aligned_rect(path);
-        if (!rect || !outer_rect->contains(*rect) || is_positive(path) != outer_is_positive) {
+    const auto outer = classify_axis_aligned_rectangle(request.subjects.front());
+    if (!outer) { return false; }
+    for (std::size_t index = 1; index < request.subjects.size(); ++index) {
+        const auto rectangle = classify_axis_aligned_rectangle(request.subjects[index]);
+        if (!rectangle || rectangle->positive != outer->positive ||
+            (rectangle->bounds != outer->bounds &&
+             !rectangle_strictly_contains(outer->bounds, rectangle->bounds))) {
             return false;
         }
     }
 
-    result.tree.clear();
-    (void)result.tree.add_child(result.tree.root(), request.subjects.front());
+    // The fixed rectangle coordinates are fully consumed before storage changes.
+    const auto& source = request.subjects.front();
+    std::array<Point64, 4> polygon{source[0], source[1], source[2], source[3]};
+    if (!outer->positive) { std::reverse(polygon.begin(), polygon.end()); }
+    struct layout_item {
+        std::size_t point_count;
+        std::size_t child_count;
+    };
+    const std::array<layout_item, 2> layout{{{0, 1}, {4, 0}}};
+    using access = polygon_tree_rebuild_access;
+    access::prepare(result.tree, layout);
+    access::begin(result.tree);
+    try {
+        auto& path = access::polygon(result.tree, 1);
+        path.insert(path.end(), polygon.begin(), polygon.end());
+        access::link(result.tree, 1, 0, 1);
+        access::resize(result.tree, 2);
+    } catch (...) {
+        access::cancel(result.tree);
+        result.open.clear();
+        throw;
+    }
     result.open.clear();
     return true;
 }

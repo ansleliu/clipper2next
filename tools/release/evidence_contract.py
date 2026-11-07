@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from tools.release.correction_authority import AUTHORITY_POLICY
 
 
 DEFAULT_CONTRACT_PATH = Path(__file__).with_name("release-evidence-contract.json")
@@ -23,6 +24,7 @@ _ROOT_FIELDS = {
     "algorithms",
     "performance",
     "provenance",
+    "authority",
 }
 _EQUIVALENCE_FIELDS = {
     "coordinate_tolerance",
@@ -462,6 +464,8 @@ def load_contract(
         )
 
     equivalence = _load_equivalence(root["equivalence"])
+    if root["authority"] != AUTHORITY_POLICY:
+        raise ValueError("authority must retain fixed comparison domains, both engines and unknown-difference FAIL")
 
     raw_profiles = root["profiles"]
     if not isinstance(raw_profiles, list) or not raw_profiles:

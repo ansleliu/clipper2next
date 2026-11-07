@@ -7,8 +7,40 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
+#include <limits>
 
 namespace next = clipper2next;
+
+TEST(Clipper2NextScalingErrorTests, CheckedScalingRejectsNonFinitePointsBeforeBounds) {
+    for (const auto value : {(std::numeric_limits<double>::quiet_NaN)(),
+                             (std::numeric_limits<double>::infinity)(),
+                             -(std::numeric_limits<double>::infinity)()}) {
+        const next::PathD path{{0, 0}, {value, 0}, {1, 1}};
+        const auto one = next::scale_path<int64_t>(path, next::scale_request{});
+        const auto many = next::scale_paths<int64_t>(next::PathsD{path}, next::scale_request{});
+        ASSERT_FALSE(one);
+        EXPECT_EQ(one.error(), next::clipper_error_code::coordinate_range);
+        ASSERT_FALSE(many);
+        EXPECT_EQ(many.error(), next::clipper_error_code::coordinate_range);
+    }
+    EXPECT_EQ(geotypes::coordinateCast<int64_t>((std::numeric_limits<double>::quiet_NaN)()), 0);
+}
+
+TEST(Clipper2NextScalingErrorTests, NonFiniteScaleParametersPrecedeEmptyInput) {
+    for (const auto value : {(std::numeric_limits<double>::quiet_NaN)(),
+                             (std::numeric_limits<double>::infinity)(),
+                             -(std::numeric_limits<double>::infinity)()}) {
+        for (const auto empty : {false, true}) {
+            const auto path = empty ? next::PathD{} : next::PathD{{0, 0}, {1, 1}};
+            const auto scaled = next::scale_path<int64_t>(path, next::scale_request{value, 1.0});
+            const auto paths = next::scale_paths<int64_t>(next::PathsD{path}, next::scale_request{1.0, value});
+            EXPECT_FALSE(scaled);
+            if (!scaled) { EXPECT_EQ(scaled.error(), next::clipper_error_code::scale_out_of_range); }
+            EXPECT_FALSE(paths);
+            if (!paths) { EXPECT_EQ(paths.error(), next::clipper_error_code::scale_out_of_range); }
+        }
+    }
+}
 
 TEST(Clipper2NextScalingErrorTests, InvalidPrecisionReturnsTypedError) {
     const auto precision = next::check_precision_range(99);

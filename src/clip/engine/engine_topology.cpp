@@ -1,4 +1,5 @@
 #include "clip/engine/private/engine_topology.h"
+#include "clip/engine/private/engine_output_owner.h"
 
 #include "clipper2next/geometry/algorithms.h"
 #include "geometry/private/geometry_predicates.h"
@@ -80,28 +81,38 @@ auto path2_contains_path1(output_point_node* first, output_point_node* second) -
     auto result = PointInPolygonResult::IsOn;
     auto* current = first;
     do {
-        switch (point_in_output_polygon(current->pt, second)) {
-        case PointInPolygonResult::IsOutside: {
-            if (result == PointInPolygonResult::IsOutside) { return false; }
-            result = PointInPolygonResult::IsOutside;
-            break;
+        const auto classifications = points_in_output_polygon(
+            std::array{current->pt, current->next->pt}, second);
+        for (const auto classification : classifications) {
+            switch (classification) {
+            case PointInPolygonResult::IsOutside: {
+                if (result == PointInPolygonResult::IsOutside) { return false; }
+                result = PointInPolygonResult::IsOutside;
+                break;
+            }
+            case PointInPolygonResult::IsInside: {
+                if (result == PointInPolygonResult::IsInside) { return true; }
+                result = PointInPolygonResult::IsInside;
+                break;
+            }
+            default: {
+                break;
+            }
+            }
+            current = current->next.get();
+            if (current == first) { break; }
         }
-        case PointInPolygonResult::IsInside: {
-            if (result == PointInPolygonResult::IsInside) { return true; }
-            result = PointInPolygonResult::IsInside;
-            break;
-        }
-        default: {
-            break;
-        }
-        }
-        current = current->next.get();
     } while (current != first);
 
     if (result == PointInPolygonResult::IsOn) {
         return boundary_path_is_inside(first, second);
     }
-    return clipper2next::path_contains_path(get_clean_path(first), get_clean_path(second));
+    const auto* owner = first->outrec->output_owner;
+    auto first_charge = scoped_workspace_charge{owner ? owner->resources() : nullptr};
+    auto second_charge = scoped_workspace_charge{first_charge.context()};
+    const auto inner = get_clean_path(first, first_charge);
+    const auto outer = get_clean_path(second, second_charge);
+    return clipper2next::path_contains_path(inner, outer);
 }
 
 auto move_splits(output_record_node* from, output_record_node* to) -> void {

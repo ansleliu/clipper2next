@@ -9,7 +9,6 @@ struct clip_union_options final {
     FillRule fill_rule{FillRule::NonZero};
     execution_options options{};
     bool decompose_disjoint_components{true};
-    bool use_offset_cleanup_monotone_scanbeam_runs{false};
 };
 
 [[nodiscard]] auto try_return_singleton_component_direct(Path64& path,

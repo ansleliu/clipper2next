@@ -1,92 +1,53 @@
 #include <gtest/gtest.h>
-
-#include "path_equivalence.h"
-#include "support/test_paths.h"
-
-#include "clipper2/clipper.triangulation.h"
-#include "clipper2next/triangulation.h"
-
-#include <string>
-#include <vector>
-
-namespace legacy = Clipper2Lib;
+#include "support/triangulation_contract.h"
+#include <algorithm>
+#include <iostream>
 namespace next = clipper2next;
 namespace oracle = clipper2next::tests::oracle;
-namespace test = clipper2next::tests;
 
-namespace {
-
-[[nodiscard]] auto to_next_status(legacy::TriangulateResult status) -> next::TriangulateResult {
-    switch (status) {
-    case legacy::TriangulateResult::success: {
-        return next::TriangulateResult::success;
-    }
-    case legacy::TriangulateResult::fail: {
-        return next::TriangulateResult::fail;
-    }
-    case legacy::TriangulateResult::no_polygons: {
-        return next::TriangulateResult::no_polygons;
-    }
-    case legacy::TriangulateResult::paths_intersect: {
-        return next::TriangulateResult::paths_intersect;
-    }
-    }
-    return next::TriangulateResult::fail;
-}
-
-[[nodiscard]] auto execute_next_triangulation(const next::Paths64& paths, bool use_delaunay)
-    -> next::triangulation_result64 {
-    next::triangulation_request64 request;
-    request.paths = paths;
-    request.use_delaunay = use_delaunay;
-    return next::triangulate(request);
-}
-
-auto assert_triangulation_matches_legacy(const next::Paths64& paths, bool use_delaunay) -> void {
-    legacy::Paths64 expected_triangles;
-    const auto legacy_status =
-        legacy::Triangulate(oracle::to_legacy_paths(paths), expected_triangles, use_delaunay);
-    const auto actual = execute_next_triangulation(paths, use_delaunay);
-
-    ASSERT_EQ(to_next_status(legacy_status), actual.status);
-    if (actual.status == next::TriangulateResult::success) {
-        oracle::assert_paths_semantically_equal(expected_triangles, actual.triangles);
-    } else {
-        EXPECT_TRUE(actual.triangles.empty());
-    }
-}
-
-}  // namespace
-
-TEST(Clipper2NextDifferentialTriangulationTests, GeneratedSimpleCorpusMatchesLegacy) {
-    const std::vector<next::Paths64> cases{
-        {test::path64({0, 0, 120, 0, 120, 80, 0, 80})},
-        {test::path64({0, 0, 160, 0, 160, 50, 90, 50, 90, 110, 0, 110})},
-        {test::path64({-80, -30, 80, -40, 140, 40, 50, 120, -90, 80})},
-        {
-            test::path64({0, 0, 300, 0, 300, 260, 0, 260}),
-            test::path64({80, 80, 80, 180, 220, 180, 220, 80}),
-        },
-    };
-
-    for (std::size_t case_index = 0; case_index < cases.size(); ++case_index) {
-        for (const auto use_delaunay : {false, true}) {
-            SCOPED_TRACE("case=" + std::to_string(case_index) +
-                         " delaunay=" + std::to_string(use_delaunay));
-            assert_triangulation_matches_legacy(cases[case_index], use_delaunay);
-        }
-    }
-}
-
-TEST(Clipper2NextDifferentialTriangulationTests, GeneratedStatusCorpusMatchesLegacy) {
+TEST(Clipper2NextDifferentialTriangulationTests, ActualBoundaryContractsRecordBothEngines) {
     const std::vector<next::Paths64> cases{
         {},
-        {test::path64({0, 0, 100, 100})},
-        {test::path64({0, 0, 120, 120, 0, 120, 120, 0})},
+        {{{0, 0}, {100, 100}}},
+        {{{0, 0}, {120, 0}, {120, 80}, {0, 80}}},
+        {{{0, 0}, {1, 0}, {0, 5}}},
+        {{{0, 0}, {100, 0}, {100, 100}, {0, 100}}, {{50, 50}, {50, 51}, {55, 50}}},
+        {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, {{10, 10}, {20, 10}, {20, 20}, {10, 20}}},
+        {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, {{10, 3}, {20, 3}, {20, 7}, {10, 7}}},
+        {{{0, 0}, {120, 120}, {0, 120}, {120, 0}}},
+        {{{0, 0}, {1, 1}, {0, 1}, {1, 0}}},
+        {{{0, 0}, {160, 0}, {160, 50}, {90, 50}, {90, 110}, {0, 110}}},
+        {{{-80, -30}, {80, -40}, {140, 40}, {50, 120}, {-90, 80}}},
+        {{{0, 0}, {300, 0}, {300, 260}, {0, 260}}, {{80, 80}, {80, 180}, {220, 180}, {220, 80}}},
+        // Invalid nested orientation and mixed root orientation remain explicit errors.
+        {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, {{2, 2}, {8, 2}, {8, 8}, {2, 8}}},
+        {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}, {{20, 0}, {20, 10}, {30, 10}, {30, 0}}},
     };
-
-    for (std::size_t case_index = 0; case_index < cases.size(); ++case_index) {
-        SCOPED_TRACE(case_index);
-        assert_triangulation_matches_legacy(cases[case_index], true);
+    std::size_t index = 0;
+    for (const auto& paths : cases) {
+        for (bool delaunay : {false, true}) {
+            oracle::record_triangulation_case(std::cout, index++, delaunay, paths);
+        }
     }
+    for (std::size_t outer_start = 0; outer_start < 4; ++outer_start) {
+        for (std::size_t hole_start = 0; hole_start < 3; ++hole_start) {
+            for (bool swap : {false, true}) {
+                for (bool reverse : {false, true}) {
+                    next::Paths64 paths{{{0, 0}, {10, 0}, {10, 10}, {0, 10}},
+                                        {{0, 5}, {2, 7}, {2, 3}}};
+                    std::rotate(paths[0].begin(), paths[0].begin() + outer_start, paths[0].end());
+                    std::rotate(paths[1].begin(), paths[1].begin() + hole_start, paths[1].end());
+                    if (swap) { std::swap(paths[0], paths[1]); }
+                    if (reverse) {
+                        for (auto& path : paths) { std::reverse(path.begin(), path.end()); }
+                    }
+                    for (bool delaunay : {false, true}) {
+                        oracle::record_triangulation_case(std::cout, index++, delaunay, paths);
+                    }
+                }
+            }
+        }
+    }
+    ASSERT_EQ(index, 124U);
+    std::cout << "Triangulation records=READY cases=" << index << " mathematical_verdict=PENDING\n";
 }

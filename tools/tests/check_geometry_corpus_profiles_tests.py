@@ -18,17 +18,10 @@ from tools.release.evidence_contract import (  # noqa: E402
     ProfileContract,
     ScenarioQuota,
 )
+from tools.release.correction_authority import AUTHORITY_POLICY, OPTION_KEYS, authority_digest, default_authority
 
 
 SCRIPT = Path(check.__file__).resolve()
-OPTION_KEYS = {
-    "fill_rule",
-    "join_type",
-    "end_type",
-    "is_closed",
-    "preserve_collinear",
-    "reverse_solution",
-}
 
 
 def canonical_json_digest(value: object) -> str:
@@ -98,7 +91,7 @@ def verification_record(
         "operation": operation,
         "scenario": scenario,
         "partition": partition,
-        "generator": {"name": "generate_release_profiles", "version": 1},
+        "generator": {"name": "generate_release_profiles", "version": 2},
         "inputs": inputs,
         "expected": {"relation": "strict-legacy-runtime"},
         "reference_engines": [{"engine": "clipper2-legacy", "version": "2.0.1"}],
@@ -113,6 +106,9 @@ def verification_record(
     options = {key: inputs[key] for key in sorted(OPTION_KEYS & set(inputs))}
     record["canonical_input_digest"] = canonical_json_digest(inputs)
     record["canonical_options_digest"] = canonical_json_digest(options)
+    domain, contract_id, expected = default_authority(operation)
+    record.update(comparison_domain=domain, contract_id=contract_id, expected=expected)
+    record["authority_digest"] = authority_digest(record)
     return record
 
 
@@ -120,7 +116,6 @@ def benchmark_twin(record: dict[str, object]) -> dict[str, object]:
     twin = copy.deepcopy(record)
     twin["id"] = str(record["id"]).replace("verification", "benchmark")
     twin["profile"] = "benchmark"
-    twin.pop("expected")
     twin.pop("reference_engines")
     twin["complexity"] = {"point_count": 5}
     twin["parameters"] = {"iterations_hint": 1}
@@ -137,6 +132,7 @@ def write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
 
 def minimal_contract_payload() -> dict[str, object]:
     return {
+        "authority": copy.deepcopy(AUTHORITY_POLICY),
         "schema_version": 1,
         "equivalence": {
             "coordinate_tolerance": 0,
@@ -188,6 +184,19 @@ def minimal_contract_payload() -> dict[str, object]:
 
 
 class GeometryCorpusProfileCheckTests(unittest.TestCase):
+    def test_rejects_unknown_expected_authority(self) -> None:
+        record = verification_record()
+        record["expected"] = {"relation": "anything-pass"}
+        errors = check.validate_profile_semantics([record], profile_contract(), "verification")
+        self.assertTrue(any("authority" in error for error in errors), errors)
+
+    def test_rejects_changed_options_not_bound_to_digest(self) -> None:
+        record = verification_record("offset", scenario="offset-positive")
+        record["inputs"]["coordinate_rounding"] = "toward_zero"
+        record["canonical_input_digest"] = canonical_json_digest(record["inputs"])
+        errors = check.validate_profile_semantics([record], profile_contract("offset", scenario_quotas={}), "verification")
+        self.assertTrue(any("options_digest" in error for error in errors), errors)
+
     def test_error_summary_preserves_total_and_categories_when_examples_are_capped(
         self,
     ) -> None:

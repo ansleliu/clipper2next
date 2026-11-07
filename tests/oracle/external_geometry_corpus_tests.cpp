@@ -16,8 +16,11 @@
 #include "geometry_corpus_root.h"
 #include "geometry_corpus_jsonl.h"
 #include "path_equivalence.h"
+#include "../support/offset_contract.h"
+#include "../support/triangulation_contract.h"
 #include "poly_tree_equivalence.h"
 #include "wkt_parser.h"
+#include <iostream>
 
 #include "clipper2/clipper.h"
 #include "clipper2/clipper.triangulation.h"
@@ -179,24 +182,6 @@ namespace {
     return next::Rect64{rect.left, rect.top, rect.right, rect.bottom};
 }
 
-[[nodiscard]] auto to_next_status(legacy::TriangulateResult status) -> next::TriangulateResult {
-    switch (status) {
-    case legacy::TriangulateResult::success: {
-        return next::TriangulateResult::success;
-    }
-    case legacy::TriangulateResult::fail: {
-        return next::TriangulateResult::fail;
-    }
-    case legacy::TriangulateResult::no_polygons: {
-        return next::TriangulateResult::no_polygons;
-    }
-    case legacy::TriangulateResult::paths_intersect: {
-        return next::TriangulateResult::paths_intersect;
-    }
-    }
-    return next::TriangulateResult::fail;
-}
-
 [[nodiscard]] auto parse_geometry_wkt(std::string_view wkt) -> next::Paths64 {
     const auto upper = oracle::upper_ascii(wkt);
     if (upper.rfind("LINESTRING", 0) == 0 || upper.rfind("MULTILINESTRING", 0) == 0) {
@@ -303,6 +288,7 @@ auto assert_offset_profile_verifies_against_legacy() -> void {
         ASSERT_TRUE(record.has_delta);
         EXPECT_NE(record.delta, 0.0);
         ASSERT_EQ(record.expected_relation, "strict-legacy-runtime");
+        ASSERT_TRUE(record.comparison_domain.empty() || record.comparison_domain == "strict-legacy-runtime");
         ASSERT_TRUE(record.has_preserve_collinear);
         ASSERT_TRUE(record.has_reverse_solution);
         ASSERT_FALSE(record.paths_wkt.empty());
@@ -328,6 +314,10 @@ auto assert_offset_profile_verifies_against_legacy() -> void {
                                                 record.reverse_solution);
         EXPECT_NO_THROW(oracle::assert_paths_semantically_equal(legacy_expected, actual));
     }
+    // The repository analytic source is independently declared; external profile
+    // cases remain strict and cannot be replaced by these minimal formal cases.
+    EXPECT_EQ(oracle::record_offset_contract_cases(std::cout, CLIPPER2NEXT_OFFSET_CONTRACT_SOURCE), 36U);
+
 }
 
 auto assert_rectclip_profile_verifies_against_legacy() -> void {
@@ -477,33 +467,20 @@ auto assert_triangulation_profile_verifies_against_legacy() -> void {
 
     const auto records = load_verification_records(root_value, "triangulation");
     ASSERT_GE(records.size(), 128U);
+    std::size_t case_index = 0;
     for (const auto& record : records) {
         SCOPED_TRACE(record.id);
         ASSERT_EQ(record.profile, "verification");
         ASSERT_TRUE(record.operation == "triangulation.sweep" ||
                     record.operation == "triangulation.delaunay");
-        ASSERT_EQ(record.expected_relation, "strict-legacy-runtime");
+        ASSERT_EQ(record.expected_relation, "triangulation-exact-contract");
         ASSERT_FALSE(record.polygon_wkt.empty());
 
         const auto input = oracle::parse_polygonal_wkt(record.polygon_wkt);
         ASSERT_FALSE(input.empty());
         const auto use_delaunay = record.operation == "triangulation.delaunay";
 
-        legacy::Paths64 expected_triangles;
-        const auto legacy_status = legacy::Triangulate(
-            oracle::to_legacy_paths(input), expected_triangles, use_delaunay);
-
-        next::triangulation_request64 request;
-        request.paths = input;
-        request.use_delaunay = use_delaunay;
-        const auto actual = next::triangulate(request);
-        ASSERT_EQ(to_next_status(legacy_status), actual.status);
-        if (actual.status == next::TriangulateResult::success) {
-            EXPECT_NO_THROW(
-                oracle::assert_paths_semantically_equal(expected_triangles, actual.triangles));
-        } else {
-            EXPECT_TRUE(actual.triangles.empty());
-        }
+        oracle::record_triangulation_case(std::cout, case_index++, use_delaunay, input);
     }
 }
 

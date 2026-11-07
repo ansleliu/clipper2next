@@ -7,7 +7,7 @@
 namespace clipper2next::internal {
 
 auto convert_horizontal_segments_to_joins(HorzSegmentList& horizontal_segments,
-                                          std::vector<horizontal_join_node>& horizontal_joins)
+                                          engine_buffer<horizontal_join_node>& horizontal_joins)
     -> void {
     const auto valid_count = std::count_if(
         horizontal_segments.begin(),

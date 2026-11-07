@@ -1,31 +1,20 @@
 #include "clipper2next/offset/operations.h"
-#include "api/private/offset_request_validation.h"
+#include "api/private/checked_execution.h"
+#include "offset/private/offset_request_validation.h"
 
 #include "clip/private/clip_request_validation.h"
 #include "offset/private/offset_algorithm.h"
 #include "offset/private/offset_group.h"
 #include "offset/private/offset_thread_state.h"
 
+#include "support/private/paths_rebuild.h"
 #include <cmath>
-#include <new>
-#include <stdexcept>
+#include <optional>
 #include <utility>
 #include <vector>
 
 namespace clipper2next {
 namespace {
-
-[[nodiscard]] auto paths_in_range(const Paths64& paths) -> bool {
-    for (const auto& path : paths) {
-        for (const auto& point : path) {
-            if (!internal::clip_coordinate_in_range(point.x) ||
-                !internal::clip_coordinate_in_range(point.y)) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
 
 auto copy_clean_path(const Path64& source, bool is_closed, Path64& destination) -> void {
     destination.clear();
@@ -51,8 +40,8 @@ auto copy_clean_path(const Path64& source, bool is_closed, Path64& destination) 
     }
 }
 
-auto make_offset_groups(const offset_request64& request,
-                        std::vector<internal::offset_group>& groups) -> void {
+auto make_offset_group(const offset_request64& request,
+                       std::optional<internal::offset_group>& group) -> void {
     if (request.paths.empty()) { return; }
     Paths64 copied_paths;
     copied_paths.reserve(request.paths.size());
@@ -62,22 +51,28 @@ auto make_offset_groups(const offset_request64& request,
         copy_clean_path(path, is_closed, copied_path);
         copied_paths.emplace_back(std::move(copied_path));
     }
-    groups.emplace_back(std::move(copied_paths),
-                        request.join_type,
-                        request.end_type,
-                        internal::offset_group_path_cleanliness::already_clean);
+    group.emplace(std::move(copied_paths),
+                  request.join_type,
+                  request.end_type,
+                  internal::offset_group_path_cleanliness::already_clean);
 }
 
-[[nodiscard]] auto offset_impl(const offset_request64& request)
-    -> paths64_result {
-    paths64_result result;
+auto offset_impl(const offset_request64& request, paths64_result& result) -> void {
     if (std::abs(request.delta) < 0.5) {
-        result.closed = request.paths;
-        return result;
+        // The request owns its input. Self assignment is already the zero-delta result.
+        if (&request.paths != &result.closed) {
+            internal::materialize_paths(request.paths, result.closed);
+        }
+        result.open.clear();
+        return;
     }
-    std::vector<internal::offset_group> groups;
-    make_offset_groups(request, groups);
-    auto& state = internal::acquire_reusable_offset_state();
+    std::optional<internal::offset_group> group;
+    make_offset_group(request, group);
+    const auto groups = group
+        ? std::span<const internal::offset_group>{&*group, 1U}
+        : std::span<const internal::offset_group>{};
+    auto lease = internal::offset_state_lease{};
+    auto& state = lease.state();
     internal::execute_offset_algorithm(
         state,
         groups,
@@ -90,41 +85,40 @@ auto make_offset_groups(const offset_request64& request,
             .arc_segments_per_quadrant = request.arc_segments_per_quadrant,
             .preserve_collinear = request.options.preserve_collinear,
             .reverse_solution = request.options.reverse_solution,
-            .check_input_coordinate_range = false,
             .coordinate_rounding = request.coordinate_rounding,
             .intersection_policy = request.options.intersection_policy,
         },
         nullptr);
-    return result;
+    result.open.clear();
 }
 
 }  // namespace
 
 auto offset(const offset_request64& request) -> paths64_result {
-    return offset_impl(request);
+    if (const auto error = internal::validate_offset_request(request);
+        error != clipper_error_code::ok) { raise_clipper_error(error); }
+    paths64_result result;
+    offset_impl(request, result);
+    return result;
 }
 
 auto offset_checked(const offset_request64& request) -> expected_paths64_result {
-    try {
+    return internal::checked_call<paths64_result>([&]() -> clipper_result<paths64_result> {
         const auto error = internal::validate_offset_request(request);
         if (error != clipper_error_code::ok) { return make_clipper_error<paths64_result>(error); }
-        if (!paths_in_range(request.paths)) {
+        if (!internal::clip_paths_in_range(request.paths)) {
             return make_clipper_error<paths64_result>(clipper_error_code::coordinate_range);
         }
-        return offset_impl(request);
-    } catch (const std::bad_alloc&) {
-        return make_clipper_error<paths64_result>(clipper_error_code::allocation_failure);
-    } catch (const std::length_error&) {
-        return make_clipper_error<paths64_result>(clipper_error_code::resource_limit);
-    } catch (const clipper_error& error) {
-        return make_clipper_error<paths64_result>(error.code());
-    } catch (...) {
-        return make_clipper_error<paths64_result>(clipper_error_code::internal_error);
-    }
+        paths64_result result;
+        offset_impl(request, result);
+        return result;
+    });
 }
 
 auto offset_into(const offset_request64& request, paths64_result& result) -> void {
-    result = offset(request);
+    if (const auto error = internal::validate_offset_request(request);
+        error != clipper_error_code::ok) { raise_clipper_error(error); }
+    offset_impl(request, result);
 }
 
 }  // namespace clipper2next

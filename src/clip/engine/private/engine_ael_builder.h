@@ -10,20 +10,18 @@
 
 namespace clipper2next::internal {
 
-auto insert_left_edge(clipper_base_state& state, active_edge_node& edge) -> void;
+auto insert_left_edge(clipper_base_state& state, active_edge_node& edge,
+                      active_edge_node* previous_minimum) -> void;
 auto adjust_curr_x_and_copy_to_sel(clipper_base_state& state, int64_t top_y) -> void;
 
-inline auto initialize_bound_from_minimum(active_edge_node& bound,
-                                          local_minimum_node& local_minima,
-                                          Vertex* top_vertex,
-                                          int wind_delta) -> void {
-    bound.bottom = local_minima.vertex.get().pt;
-    bound.current_x = bound.bottom.x;
-    bound.wind_dx = wind_delta;
-    bound.vertex_top = top_vertex;
-    bound.top_point = bound.vertex_top->pt;
-    bound.local_min = &local_minima;
+inline auto create_bound_from_minimum(clipper_base_state& state,
+                                      local_minimum_node& local_minima,
+                                      Vertex& top_vertex,
+                                      int wind_delta) -> active_edge_node& {
+    auto& bound = state.active_pool_.emplace(
+        local_minima.vertex.get().pt, top_vertex, local_minima, wind_delta);
     bound.dx = get_dx(bound.bottom, bound.top_point);
+    return bound;
 }
 
 template <class AddLocalMinPoly, class CheckJoinLeft, class CheckJoinRight, class IntersectEdges>
@@ -36,6 +34,7 @@ auto insert_local_minima_into_ael(clipper_base_state& state,
     local_minimum_node* local_minima = nullptr;
     active_edge_node* left_bound = nullptr;
     active_edge_node* right_bound = nullptr;
+    active_edge_node* previous_minimum = nullptr;
 
     while (pop_local_minima(
         state.current_locmin_iter_, state.minima_list_.end(), bot_y, local_minima)) {
@@ -43,15 +42,15 @@ auto insert_local_minima_into_ael(clipper_base_state& state,
         if ((minimum_vertex.flags & VertexFlags::OpenStart) != VertexFlags::Empty) {
             left_bound = nullptr;
         } else {
-            left_bound = &state.active_pool_.emplace();
-            initialize_bound_from_minimum(*left_bound, *local_minima, minimum_vertex.prev, -1);
+            left_bound = &create_bound_from_minimum(
+                state, *local_minima, *minimum_vertex.prev, -1);
         }
 
         if ((minimum_vertex.flags & VertexFlags::OpenEnd) != VertexFlags::Empty) {
             right_bound = nullptr;
         } else {
-            right_bound = &state.active_pool_.emplace();
-            initialize_bound_from_minimum(*right_bound, *local_minima, minimum_vertex.next, 1);
+            right_bound = &create_bound_from_minimum(
+                state, *local_minima, *minimum_vertex.next, 1);
         }
 
         if (left_bound && right_bound) {
@@ -73,7 +72,8 @@ auto insert_local_minima_into_ael(clipper_base_state& state,
 
         bool contributing = false;
         left_bound->is_left_bound = true;
-        insert_left_edge(state, *left_bound);
+        insert_left_edge(state, *left_bound, previous_minimum);
+        previous_minimum = left_bound;
 
         if (is_open(*left_bound)) {
             set_wind_count_for_open_path_edge(state, *left_bound);

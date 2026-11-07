@@ -8,7 +8,9 @@
 #include "clipper2next/clipper.h"
 
 #include <array>
+#include <cfenv>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -249,6 +251,38 @@ struct oracle_topology_sink final {
 };
 
 }  // namespace
+
+TEST(Clipper2NextDifferentialClipTests, ScanlineProjectionMatchesLegacyFloatingEnvironment) {
+    struct rounding_restore {
+        int previous = std::fegetround();
+        ~rounding_restore() { std::fesetround(previous); }
+    } restore;
+    int cases = 0;
+    for (const auto mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
+        EXPECT_EQ(std::fesetround(mode), 0);
+        for (const auto mirror : {-1, 1}) {
+            for (int clip_y = 1; clip_y < 6; ++clip_y) {
+                const next::Paths64 subjects{{{0, 0}, {9 * mirror, 0}, {0, 6}}};
+                const next::Paths64 clips{{{-10, -2}, {10, -2}, {10, clip_y}, {-10, clip_y}}};
+                for (const auto type : {next::ClipType::Intersection, next::ClipType::Union,
+                                        next::ClipType::Difference, next::ClipType::Xor}) {
+                    for (const auto fill : {next::FillRule::EvenOdd, next::FillRule::NonZero}) {
+                        SCOPED_TRACE(::testing::Message() << mode << ',' << mirror << ',' << clip_y
+                                                         << ',' << static_cast<int>(type)
+                                                         << ',' << static_cast<int>(fill));
+                        const auto expected = execute_legacy_clip(type, fill, subjects, clips);
+                        const auto actual = execute_next_clip(type, fill, subjects, clips);
+                        try { oracle::assert_paths_semantically_equal(expected, actual); }
+                        catch (const std::runtime_error& error) { ADD_FAILURE() << error.what(); }
+                        EXPECT_EQ(std::fegetround(), mode);
+                        ++cases;
+                    }
+                }
+            }
+        }
+    }
+    EXPECT_EQ(cases, 320);
+}
 
 TEST(Clipper2NextDifferentialClipTests, UnionOfOverlappingRectanglesMatchesLegacy) {
     const auto legacy_subject = legacy::Paths64{

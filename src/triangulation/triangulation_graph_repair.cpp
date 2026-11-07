@@ -1,187 +1,229 @@
 #include "triangulation/private/triangulation_graph_repair.h"
-
-#include "triangulation/private/triangulation_intersections.h"
-#include "triangulation/private/triangulation_topology.h"
-
+#include "triangulation/private/triangulation_source_segment.h"
+#include "triangulation/private/triangulation_coordinate_identity.h"
+#include "triangulation/private/triangulation_boundary_events.h"
+#include "geometry/private/geometry_segment_query.h"
+#include "support/private/checked_size.h"
+#include "geometry/private/integer_area_sign.h"
 #include <algorithm>
-#include <cmath>
+#include <cassert>
+#include <span>
 
 namespace clipper2next::internal {
 namespace {
+using triangulation_graph_repair_detail::containment_rows;
+using triangulation_graph_repair_detail::indexed_relation;
+using ring_contact = std::pair<std::size_t, std::size_t>;
 
-[[nodiscard]] auto local_minimum_angle(triangulation_vertex* vertex) -> double {
-    int ascending = 0;
-    int descending = 1;
-    if ((*(*vertex).edges[0]).kind != triangulation_edge_kind::ascend) {
-        descending = 0;
-        ascending = 1;
-    }
-
-    const auto* descending_edge = (*vertex).edges[descending].get();
-    const auto* ascending_edge = (*vertex).edges[ascending].get();
-    const auto& from = (*(*descending_edge).vT).pt;
-    const auto& pivot = (*vertex).pt;
-    const auto& to = (*(*ascending_edge).vT).pt;
-    const auto abx = static_cast<double>(pivot.x - from.x);
-    const auto aby = static_cast<double>(pivot.y - from.y);
-    const auto bcx = static_cast<double>(pivot.x - to.x);
-    const auto bcy = static_cast<double>(pivot.y - to.y);
-    const auto dot_product = abx * bcx + aby * bcy;
-    const auto cross_product = abx * bcy - aby * bcx;
-    return std::atan2(cross_product, dot_product);
+auto bounds_contain(const Rect64& outer, const Rect64& inner) noexcept -> bool {
+    return outer.left <= inner.left && outer.top <= inner.top &&
+           outer.right >= inner.right && outer.bottom >= inner.bottom;
 }
 
-auto split_triangulation_edge(triangulation_context& context,
-                              triangulation_edge* long_edge,
-                              triangulation_edge* short_edge) -> void {
-    auto* old_top = (*long_edge).vT.get();
-    auto* new_top = (*short_edge).vT.get();
-    if (!remove_edge_from_vertex(context, old_top, long_edge)) { return; }
-
-    (*long_edge).vT = new_top;
-    if ((*long_edge).vL == old_top) {
-        (*long_edge).vL = new_top;
-    } else {
-        (*long_edge).vR = new_top;
-    }
-    (*new_top).edges.push_back(long_edge);
-    (void)create_triangulation_edge(context, new_top, old_top, (*long_edge).kind);
+auto invalid_structure() -> void {
+    raise_clipper_error(clipper_error_code::invalid_argument);
 }
 
-[[nodiscard]] auto remove_intersection(triangulation_context& context,
-                                       triangulation_edge* first,
-                                       triangulation_edge* second) -> bool {
-    auto* vertex = (*first).vL.get();
-    auto* split_edge = second;
-    auto distance =
-        ShortestDistFromSegment((*(*first).vL).pt, (*(*second).vL).pt, (*(*second).vR).pt);
-
-    auto candidate_distance =
-        ShortestDistFromSegment((*(*first).vR).pt, (*(*second).vL).pt, (*(*second).vR).pt);
-    if (candidate_distance < distance) {
-        distance = candidate_distance;
-        vertex = (*first).vR.get();
+auto materialize_constraints(triangulation_context& context,
+                             const std::vector<triangulation_source_segment>& segments, int root_sign) -> void {
+    triangulation_coordinate_identity vertices{segments.size()};
+    triangulation_vertex* previous = nullptr;
+    auto ring = no_boundary_event;
+    // Splitting preserves contour order and each preceding endpoint.
+    for (const auto& source : segments) {
+        const auto splits = source.points();
+        if (ring != source.ring()) {
+            previous = vertices.vertex(context, splits.front());
+            ring = source.ring();
+        }
+        assert(previous->pt == splits.front());
+        for (std::size_t k = 1; k < splits.size(); ++k) {
+            auto* next = vertices.vertex(context, splits[k]);
+            auto* a = previous;
+            auto* b = next;
+            if (root_sign < 0) { std::swap(a, b); }
+            (void)create_triangulation_edge(context, a, b,
+                sweep_before(a->pt, b->pt) ? triangulation_edge_kind::ascend : triangulation_edge_kind::descend);
+            previous = next;
+        }
     }
+}
 
-    candidate_distance =
-        ShortestDistFromSegment((*(*second).vL).pt, (*(*first).vL).pt, (*(*first).vR).pt);
-    if (candidate_distance < distance) {
-        distance = candidate_distance;
-        split_edge = first;
-        vertex = (*second).vL.get();
+auto source_segments(const triangulation_source_paths& paths) -> std::vector<triangulation_source_segment> {
+    std::vector<triangulation_source_segment> segments;
+    segments.reserve(paths.point_count());
+    for (std::size_t ring = 0; ring < paths.size(); ++ring) {
+        const auto path = paths[ring];
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            const auto a = path[i], b = path[(i + 1) % path.size()];
+            segments.emplace_back(a, b, ring);
+        }
     }
-
-    candidate_distance =
-        ShortestDistFromSegment((*(*second).vR).pt, (*(*first).vL).pt, (*(*first).vR).pt);
-    if (candidate_distance < distance) {
-        distance = candidate_distance;
-        split_edge = first;
-        vertex = (*second).vR.get();
-    }
-
-    if (distance > 1.000) { return false; }
-
-    auto* old_top = (*split_edge).vT.get();
-    if (!remove_edge_from_vertex(context, old_top, split_edge)) { return false; }
-    if ((*split_edge).vL == old_top) {
-        (*split_edge).vL = vertex;
-    } else {
-        (*split_edge).vR = vertex;
-    }
-    (*split_edge).vT = vertex;
-    (*vertex).edges.push_back(split_edge);
-    (*vertex).innerLM = false;
-    if ((*(*split_edge).vB).innerLM && local_minimum_angle((*split_edge).vB) <= 0) {
-        (*(*split_edge).vB).innerLM = false;
-    }
-    (void)create_triangulation_edge(context, vertex, old_top, (*split_edge).kind);
+    return segments;
+}
+auto split_intersections(std::vector<triangulation_source_segment>& segments,
+                         std::vector<ring_contact>& contacts,
+                         const triangulation_predicate_domain& domain) -> bool {
+    triangulation_bounds_catalog catalog;
+    catalog.build(segments.size(), [&](std::size_t i) {
+        return triangulation_bounds(segments[i].first(), segments[i].second());
+    });
+    const bool valid=catalog.query_pairs([&](std::size_t i,std::size_t j) {
+        auto& a=segments[i];
+        auto& b=segments[j];
+        const geometry_segment_query query{a.first(),a.second(),domain.orientation_fits_signed64(),catalog.bounds(i)};
+        const auto facts=query.contacts(b.first(),b.second(),catalog.bounds(j));
+        if (facts.proper_crossing) { return false; }
+        const bool a0=facts.first_on_target,a1=facts.second_on_target;
+        const bool b0=facts.target_first_on_query,b1=facts.target_second_on_query;
+        if (a0) { b.add_split(a.first()); }
+        if (a1) { b.add_split(a.second()); }
+        if (b0) { a.add_split(b.first()); }
+        if (b1) { a.add_split(b.second()); }
+        if (a.ring()!=b.ring() && (a0 || a1 || b0 || b1)) {
+            contacts.emplace_back(std::min(a.ring(),b.ring()),std::max(a.ring(),b.ring()));
+        }
+        return true;
+    });
+    if (!valid) { return false; }
+    std::sort(contacts.begin(), contacts.end());
+    contacts.erase(std::unique(contacts.begin(), contacts.end()), contacts.end());
     return true;
 }
-
-}  // namespace
-
-auto repair_triangulation_graph(triangulation_context& context) -> bool {
-    for (std::size_t first_index = 0; first_index < context.edges.size(); ++first_index) {
-        auto* first = context.edges[first_index].get();
-        for (auto second_index = first_index + 1; second_index < context.edges.size();
-             ++second_index) {
-            auto* second = context.edges[second_index].get();
-            if ((*(*second).vL).pt.x >= (*(*first).vR).pt.x) { break; }
-            if ((*(*second).vT).pt.y < (*(*first).vB).pt.y &&
-                (*(*second).vB).pt.y > (*(*first).vT).pt.y &&
-                SegsIntersect(
-                    (*(*second).vL).pt, (*(*second).vR).pt, (*(*first).vL).pt, (*(*first).vR).pt) ==
-                    triangulation_intersect_kind::intersect) {
-                if (!remove_intersection(context, second, first)) { return false; }
-            }
-        }
+auto source_signs(const triangulation_source_paths& paths) -> std::vector<int> {
+    std::vector<int> signs;
+    signs.reserve(paths.size());
+    for (std::size_t i = 0; i != paths.size(); ++i) {
+        const auto sign = signed_area_sign(paths[i]);
+        if (!sign) { invalid_structure(); }
+        signs.push_back(sign);
     }
-    return true;
+    return signs;
+}
+auto order_splits(std::vector<triangulation_source_segment>& segments) -> void {
+    for (auto& segment : segments) { segment.order_splits(); }
+}
+auto possible_relations(const triangulation_bounds_catalog& catalog,
+                        const std::vector<ring_contact>& contacts, std::size_t count) -> containment_rows {
+    std::vector<indexed_relation> candidates;
+    (void)catalog.query_pairs([&](std::size_t ring,std::size_t other) {
+        const bool contact = std::binary_search(contacts.begin(), contacts.end(), ring_contact{ring, other});
+        // Without boundary crossing or contact, a connected contour is wholly
+        // inside or outside the other. Containment requires whole-box inclusion.
+        if (contact || bounds_contain(catalog.bounds(other), catalog.bounds(ring))) {
+            candidates.push_back({ring, {other, -1, contact}});
+        }
+        if (contact || bounds_contain(catalog.bounds(ring), catalog.bounds(other))) {
+            candidates.push_back({other, {ring, -1, contact}});
+        }
+        return true;
+    });
+    return containment_rows{count, candidates};
+}
+auto noncontact_winding(std::span<const Point64> path, Point64 point,
+                        const triangulation_predicate_domain& domain) noexcept -> int64_t {
+    int64_t winding = 0;
+    auto previous = path.back();
+    for (const auto current : path) {
+        if (previous.y <= point.y) {
+            if (current.y > point.y && domain.orientation(previous, current, point) > 0) { ++winding; }
+        } else if (current.y <= point.y && domain.orientation(previous, current, point) < 0) {
+            --winding;
+        }
+        previous = current;
+    }
+    return winding;
 }
 
-auto merge_duplicate_or_collinear_vertices(triangulation_context& context) -> void {
-    if (context.vertices.size() < 2) { return; }
-
-    auto first_vertex_iterator = context.vertices.begin();
-    for (auto second_vertex_iterator = context.vertices.begin() + 1;
-         second_vertex_iterator != context.vertices.end();
-         ++second_vertex_iterator) {
-        if ((*first_vertex_iterator)->pt != (*second_vertex_iterator)->pt) {
-            first_vertex_iterator = second_vertex_iterator;
-            continue;
-        }
-
-        auto* first_vertex = (*first_vertex_iterator).get();
-        auto* second_vertex = (*second_vertex_iterator).get();
-        if (!(*first_vertex).innerLM || !(*second_vertex).innerLM) {
-            (*first_vertex).innerLM = false;
-        }
-
-        for (auto edge_ref : (*second_vertex).edges) {
-            auto* edge = edge_ref.get();
-            if ((*edge).vB == second_vertex) {
-                (*edge).vB = first_vertex;
-            } else {
-                (*edge).vT = first_vertex;
-            }
-            if ((*edge).vL == second_vertex) {
-                (*edge).vL = first_vertex;
-            } else {
-                (*edge).vR = first_vertex;
-            }
-        }
-        std::copy((*second_vertex).edges.begin(),
-                  (*second_vertex).edges.end(),
-                  std::back_inserter((*first_vertex).edges));
-        (*second_vertex).edges.clear();
-
-        for (auto edge_iterator = (*first_vertex).edges.begin();
-             edge_iterator != (*first_vertex).edges.end();
-             ++edge_iterator) {
-            if (is_horizontal_edge(**edge_iterator) || (*edge_iterator)->vB != first_vertex) {
+auto measure_relations(const triangulation_context& context, const std::vector<triangulation_source_segment>& segments,
+                       const std::vector<int>& signs, containment_rows& rows,
+                       const triangulation_predicate_domain& domain) -> void {
+    for (const auto& segment : segments) {
+        const auto splits = segment.points();
+        const auto delta = ray_to(segment.first(), segment.second());
+        const boundary_ray normal{-delta.y * signs[segment.ring()], delta.x * signs[segment.ring()]};
+        for (auto& relation : rows[segment.ring()]) {
+            if (!relation.contact) {
+                // Complete contact enumeration proves this endpoint is strictly
+                // off the other boundary, with constant winding along this ring.
+                // The existing point domain suffices; no symbolic normal is needed.
+                if (relation.value == -1) {
+                    relation.value = noncontact_winding(context.source_paths[relation.ring],
+                                                        segment.first(), domain) != 0;
+                }
                 continue;
             }
-            for (auto second_edge_iterator = edge_iterator + 1;
-                 second_edge_iterator != (*first_vertex).edges.end();
-                 ++second_edge_iterator) {
-                auto* first_edge = (*edge_iterator).get();
-                auto* second_edge = (*second_edge_iterator).get();
-                if ((*second_edge).vB != first_vertex ||
-                    (*(*first_edge).vT).pt.y == (*(*second_edge).vT).pt.y ||
-                    cross_product_sign(
-                        (*(*first_edge).vT).pt, (*first_vertex).pt, (*(*second_edge).vT).pt) != 0) {
-                    continue;
-                }
-                if ((*(*first_edge).vT).pt.y < (*(*second_edge).vT).pt.y) {
-                    split_triangulation_edge(context, first_edge, second_edge);
-                } else {
-                    split_triangulation_edge(context, second_edge, first_edge);
-                }
-                if (context.internal_error) { return; }
-                break;
+            for (std::size_t k = 1; k < splits.size(); ++k) {
+                const auto a = splits[k - 1], b = splits[k];
+                const int value = triangulation_probe_in_bounds(context.source_rings.bounds(relation.ring),
+                    a, b, normal.x, normal.y) ? boundary_winding(context.source_paths[relation.ring], a, b, normal) != 0 : 0;
+                if (relation.value != -1 && relation.value != value) { invalid_structure(); }
+                relation.value = value;
             }
         }
     }
 }
+auto relation_value(const containment_rows& rows, std::size_t ring, std::size_t other) -> int {
+    const auto& row = rows[ring];
+    const auto found = std::lower_bound(row.begin(), row.end(), other,
+        [](const auto& item, std::size_t value) { return item.ring < value; });
+    return found != row.end() && found->ring == other ? found->value : 0;
+}
+auto root_direction(const containment_rows& rows, const std::vector<int>& signs) -> int {
+    int root_sign = 0;
+    for (std::size_t ring = 0; ring < rows.size(); ++ring) {
+        std::size_t depth = 0;
+        for (const auto& ancestor : rows[ring]) {
+            if (ancestor.value != 1) { continue; }
+            const auto s = ancestor.ring;
+            if (relation_value(rows, s, ring) == 1) { invalid_structure(); }
+            ++depth;
+            for (const auto& other : rows[ring]) {
+                const auto t = other.ring;
+                if (t > s && other.value == 1 && relation_value(rows, s, t) != 1 && relation_value(rows, t, s) != 1) {
+                    invalid_structure();
+                }
+            }
+        }
+        const int implied = depth % 2 ? -signs[ring] : signs[ring];
+        if (root_sign && implied != root_sign) { invalid_structure(); }
+        root_sign = implied;
+    }
+    return root_sign;
+}
+auto ring_bounds(std::span<const Point64> path) -> Rect64 {
+    auto bounds = triangulation_bounds(path.front(), path.front());
+    for (const auto point : path) {
+        bounds.left = std::min(bounds.left, point.x); bounds.right = std::max(bounds.right, point.x);
+        bounds.top = std::min(bounds.top, point.y); bounds.bottom = std::max(bounds.bottom, point.y);
+    }
+    return bounds;
+}
+} // namespace
 
-}  // namespace clipper2next::internal
+auto normalize_triangulation_constraints(triangulation_context& context) -> TriangulateResult {
+    auto& paths = context.source_paths;
+    if (paths.empty()) { return TriangulateResult::no_polygons; }
+    context.source_rings.build(paths.size(), [&](std::size_t i) { return ring_bounds(paths[i]); });
+    auto segments = source_segments(paths);
+    const auto domain = triangulation_predicate_domain::from_points(
+        checked_size_multiply(segments.size(), 2U), [&](std::size_t i) {
+            return i % 2U ? segments[i / 2U].second() : segments[i / 2U].first();
+        });
+    std::vector<ring_contact> contacts;
+    if (!split_intersections(segments, contacts, domain)) { return TriangulateResult::paths_intersect; }
+    const auto signs = source_signs(paths);
+    order_splits(segments);
+    auto relations = possible_relations(context.source_rings, contacts, paths.size());
+    measure_relations(context, segments, signs, relations, domain);
+    const auto direction = root_direction(relations, signs);
+    if (direction < 0) {
+        for (std::size_t i = 0; i != paths.size(); ++i) {
+            const auto path = paths.mutable_path(i);
+            std::reverse(path.begin(), path.end());
+        }
+    }
+    materialize_constraints(context, segments, direction);
+    return TriangulateResult::success;
+}
+} // namespace clipper2next::internal

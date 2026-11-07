@@ -1,4 +1,6 @@
 #pragma once
+#include "clip/engine/private/engine_buffer.h"
+#include "support/private/storage/release_vector.h"
 
 #include "clipper2next/clip/types.h"
 #include "support/private/storage/topology_store.h"
@@ -94,16 +96,21 @@ struct output_point_node {
         prev = this;
     }
 
-    output_point_node(const Point64& pt_, output_record_node& outrec_)
+    output_point_node(const Point64& pt_, output_record_node& outrec_) noexcept
         : pt(pt_),
           outrec(outrec_) {
         link_to_self();
     }
 };
 
-using OutRecList = std::vector<output_record_node_ref>;
+using OutRecList = internal::engine_buffer<output_record_node_ref>;
 
 struct output_record_node {
+    output_record_node() = default;
+    output_record_node(std::size_t index, internal::engine_output_owner& output,
+                       internal::execution_resource_ledger* resources) noexcept
+        : idx(index), output_owner(&output), splits(resources) {}
+
     size_t idx = 0;
     internal::engine_output_owner* output_owner = nullptr;
 
@@ -120,7 +127,6 @@ struct output_record_node {
 
     output_record_node_ref recursive_split;
     Rect64 bounds = {};
-    Path64 path;
     bool is_open = false;
 };
 
@@ -157,10 +163,17 @@ struct active_edge_node {
     bool is_left_bound = false;
     JoinWith join_with = JoinWith::NoJoin;
 
+    active_edge_node() = default;
+    active_edge_node(const Point64& bottom_point, Vertex& top_vertex,
+                     local_minimum_node& minimum, int wind_delta) noexcept
+        : bottom(bottom_point), top_point(top_vertex.pt), current_x(bottom_point.x),
+          wind_dx(wind_delta), vertex_top(top_vertex), local_min(minimum) {}
+
     [[nodiscard]] auto is_joined() const -> bool { return join_with != JoinWith::NoJoin; }
 };
 
 struct local_minimum_node {
+    std::size_t sort_ordinal{};
     std::reference_wrapper<Vertex> vertex;
     PathType polytype;
 
@@ -206,81 +219,89 @@ struct IntersectNode {
 };
 
 struct horizontal_segment_node {
-    std::optional<std::reference_wrapper<output_point_node>> left_op;
-    std::optional<std::reference_wrapper<output_point_node>> right_op;
+    std::size_t sort_ordinal{};
+    output_point_node_ref left_op;
+    output_point_node_ref right_op;
     bool left_to_right = true;
 
     horizontal_segment_node() = default;
     explicit horizontal_segment_node(output_point_node& op) noexcept
         : left_op(op) {}
 
-    [[nodiscard]] auto left_point() noexcept -> output_point_node& { return (*left_op).get(); }
+    [[nodiscard]] auto left_point() noexcept -> output_point_node& { return *left_op; }
 
     [[nodiscard]] auto left_point() const noexcept -> const output_point_node& {
-        return (*left_op).get();
+        return *left_op;
     }
 
-    [[nodiscard]] auto right_point() noexcept -> output_point_node& { return (*right_op).get(); }
+    [[nodiscard]] auto right_point() noexcept -> output_point_node& { return *right_op; }
 
     [[nodiscard]] auto right_point() const noexcept -> const output_point_node& {
-        return (*right_op).get();
+        return *right_op;
     }
 
-    [[nodiscard]] auto has_right_point() const noexcept -> bool { return right_op.has_value(); }
+    [[nodiscard]] auto has_right_point() const noexcept -> bool { return right_op != nullptr; }
 
     auto set_left_point(output_point_node& point) noexcept -> void { left_op = point; }
 
     auto set_right_point(output_point_node& point) noexcept -> void { right_op = point; }
 
-    auto clear_right_point() noexcept -> void { right_op.reset(); }
+    auto clear_right_point() noexcept -> void { right_op = nullptr; }
 
     [[nodiscard]] auto is_complete() const -> bool {
-        return left_op.has_value() && right_op.has_value();
+        return left_op != nullptr && right_op != nullptr;
     }
 };
 
 struct horizontal_join_node {
-    std::optional<std::reference_wrapper<output_point_node>> op1;
-    std::optional<std::reference_wrapper<output_point_node>> op2;
+    output_point_node_ref op1;
+    output_point_node_ref op2;
 
     horizontal_join_node() = default;
     explicit horizontal_join_node(output_point_node& ltr, output_point_node& rtl) noexcept
         : op1(ltr),
           op2(rtl) {}
 
-    [[nodiscard]] auto first_point() noexcept -> output_point_node& { return (*op1).get(); }
+    [[nodiscard]] auto first_point() noexcept -> output_point_node& { return *op1; }
 
     [[nodiscard]] auto first_point() const noexcept -> const output_point_node& {
-        return (*op1).get();
+        return *op1;
     }
 
-    [[nodiscard]] auto second_point() noexcept -> output_point_node& { return (*op2).get(); }
+    [[nodiscard]] auto second_point() noexcept -> output_point_node& { return *op2; }
 
     [[nodiscard]] auto second_point() const noexcept -> const output_point_node& {
-        return (*op2).get();
+        return *op2;
     }
 
-    [[nodiscard]] auto has_pair() const -> bool { return op1.has_value() && op2.has_value(); }
+    [[nodiscard]] auto has_pair() const -> bool { return op1 != nullptr && op2 != nullptr; }
 };
 
-using HorzSegmentList = std::vector<horizontal_segment_node>;
+using HorzSegmentList = internal::engine_buffer<horizontal_segment_node>;
 using LocalMinima_ptr = std::unique_ptr<local_minimum_node>;
 // Local minima are stored by value in a contiguous vector: it avoids one small
 // heap allocation per minimum and keeps them cache-local. Edges reference a
 // minimum by raw pointer (active_edge_node::local_min); those pointers are taken
 // only during execute(), after the list is fully built and sorted and while it
 // no longer grows, so element addresses are stable when referenced.
-using LocalMinimaList = std::vector<local_minimum_node>;
-using IntersectNodeList = std::vector<IntersectNode>;
+using LocalMinimaList = internal::engine_buffer<local_minimum_node>;
+using IntersectNodeList = internal::engine_buffer<IntersectNode>;
 
 // Request parsing stores vertices in reusable blocks so a long-lived engine
 // state can amortize allocation growth across execute() calls.
 class VertexStorageList final {
 public:
-    auto clear() noexcept -> void { used_blocks_ = 0; }
+    auto bind(internal::execution_resource_ledger* context) -> void {
+        charge_ = internal::scoped_workspace_charge{context, internal::workspace_category::staging};
+    }
+    auto detach() noexcept -> void {
+        charge_ = internal::scoped_workspace_charge{nullptr, internal::workspace_category::staging};
+    }
+    auto clear() noexcept -> void { used_blocks_ = 0; charge_.release(); }
 
     auto release() noexcept -> void {
-        blocks_.clear();
+        charge_.release();
+        internal::release_vector(blocks_);
         used_blocks_ = 0;
     }
 
@@ -289,10 +310,16 @@ public:
     auto reserve(std::size_t block_count) -> void { blocks_.reserve(block_count); }
 
     [[nodiscard]] auto acquire(std::size_t vertex_count) -> Vertex* {
-        if (used_blocks_ == blocks_.size()) { blocks_.emplace_back(); }
-        auto& block = blocks_[used_blocks_++];
-        block.vertices.resize(vertex_count);
-        return block.vertices.data();
+        const auto next = internal::checked_size_add(charge_.bytes(),
+            internal::checked_size_add(sizeof(vertex_block), internal::checked_size_multiply(vertex_count, sizeof(Vertex))));
+        if (used_blocks_ < blocks_.size() && blocks_[used_blocks_].vertices.size() == vertex_count) {
+            auto& block = blocks_[used_blocks_];
+            const auto error = charge_.try_construct_bytes<internal::workspace_category::staging>(
+                next, [&]() noexcept { ++used_blocks_; });
+            if (error != clipper_error_code::ok) { raise_clipper_error(error); }
+            return block.vertices.data();
+        }
+        return acquire_resized(vertex_count, next);
     }
 
 private:
@@ -300,6 +327,22 @@ private:
         std::vector<Vertex> vertices;
     };
 
+#if defined(_MSC_VER)
+    __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+    __attribute__((noinline))
+#endif
+    auto acquire_resized(std::size_t vertex_count, std::size_t next) -> Vertex* {
+        auto growth = internal::scoped_workspace_growth{charge_, next, 1U};
+        if (used_blocks_ == blocks_.size()) { blocks_.emplace_back(); }
+        auto& block = blocks_[used_blocks_];
+        block.vertices.resize(vertex_count);
+        ++used_blocks_;
+        growth.commit();
+        return block.vertices.data();
+    }
+
+    internal::scoped_workspace_charge charge_{nullptr, internal::workspace_category::staging};
     std::vector<vertex_block> blocks_;
     std::size_t used_blocks_ = 0;
 };

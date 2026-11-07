@@ -3,6 +3,12 @@
 #include "clipper2next/geometry/line_intersections.h"
 #include "clipper2next/geometry/predicates.h"
 
+#include <cstdint>
+
+#if defined(_MSC_VER) && defined(_M_X64)
+#include <intrin.h>
+#endif
+
 namespace clipper2next::internal {
 
 [[nodiscard]] auto products_are_equal(int64_t a, int64_t b, int64_t c, int64_t d) -> bool;
@@ -13,9 +19,28 @@ namespace clipper2next::internal {
 
 // Exact for points whose x/y coordinates satisfy the Clipper coordinate
 // contract [MIN_COORD, MAX_COORD]. Call only after request range validation.
-[[nodiscard]] auto cross_product_sign_in_clipper_range(const Point64& first,
-                                                       const Point64& second,
-                                                       const Point64& third) -> int;
+[[nodiscard]] inline auto cross_product_sign_in_clipper_range(const Point64& first,
+                                         const Point64& second,
+                                         const Point64& third) -> int {
+    const auto ab_x = second.x - first.x;
+    const auto bc_y = third.y - second.y;
+    const auto ab_y = second.y - first.y;
+    const auto bc_x = third.x - second.x;
+#if (defined(__clang__) || defined(__GNUC__)) && UINTPTR_MAX >= UINT64_MAX
+    const auto lhs = static_cast<__int128_t>(ab_x) * static_cast<__int128_t>(bc_y);
+    const auto rhs = static_cast<__int128_t>(ab_y) * static_cast<__int128_t>(bc_x);
+    return (lhs > rhs) - (lhs < rhs);
+#elif defined(_MSC_VER) && defined(_M_X64)
+    __int64 lhs_high = 0;
+    __int64 rhs_high = 0;
+    const auto lhs_low = static_cast<unsigned __int64>(_mul128(ab_x, bc_y, &lhs_high));
+    const auto rhs_low = static_cast<unsigned __int64>(_mul128(ab_y, bc_x, &rhs_high));
+    if (lhs_high != rhs_high) { return lhs_high > rhs_high ? 1 : -1; }
+    return (lhs_low > rhs_low) - (lhs_low < rhs_low);
+#else
+    return cross_product_sign(first, second, third);
+#endif
+}
 
 // Fast line interpolation for coordinates already validated against the
 // Clipper coordinate contract. The interpolated point remains comfortably

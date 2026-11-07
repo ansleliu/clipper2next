@@ -60,7 +60,14 @@ auto update_horizontal_segment(horizontal_segment_node& segment) noexcept -> boo
 }
 
 auto sort_horizontal_segments(HorzSegmentList& segments) -> void {
-    std::stable_sort(segments.begin(), segments.end(), compare_horizontal_segments);
+    // Reassign from the current order on every sort. The ordinal breaks only
+    // geometric ties, exactly preserving the previous stable-sort result.
+    for (std::size_t index = 0; index < segments.size(); ++index) { segments[index].sort_ordinal = index; }
+    std::sort(segments.begin(), segments.end(), [](const auto& first, const auto& second) {
+        if (compare_horizontal_segments(first, second)) { return true; }
+        if (compare_horizontal_segments(second, first)) { return false; }
+        return first.sort_ordinal < second.sort_ordinal;
+    });
 }
 
 }  // namespace clipper2next::internal

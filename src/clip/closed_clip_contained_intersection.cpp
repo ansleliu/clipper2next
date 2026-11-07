@@ -5,6 +5,7 @@
 #include "clipper2next/core/rect.h"
 #include "geometry/private/path_simplicity.h"
 
+#include "support/private/paths_rebuild.h"
 #include <algorithm>
 #include <cstdlib>
 #include <optional>
@@ -82,62 +83,42 @@ namespace {
     return path;
 }
 
-[[nodiscard]] auto containment_depths_for_paths(const Paths64& paths)
-    -> std::optional<std::vector<std::size_t>> {
-    std::vector<Rect64> path_bounds;
-    path_bounds.reserve(paths.size());
-    for (const auto& path : paths) {
-        if (area(path) == 0.0) { return std::nullopt; }
-        path_bounds.emplace_back(bounds(path));
+struct contained_contour {
+    Path64 points;
+    Rect64 bounds;
+    double signed_area;
+};
+
+[[nodiscard]] auto orient_contours(std::vector<contained_contour>& contours, FillRule fill_rule)
+    -> bool {
+    std::vector<std::size_t> depths(contours.size(), 0U);
+    for (const auto& contour : contours) {
+        if (contour.signed_area == 0.0) { return false; }
     }
-
-    std::vector<std::size_t> depths(paths.size(), 0U);
-    for (std::size_t first = 0; first < paths.size(); ++first) {
-        for (std::size_t second = first + 1U; second < paths.size(); ++second) {
-            if (!path_bounds[first].intersects(path_bounds[second])) { continue; }
-
-            auto first_contains_second = false;
-            if (path_bounds[first].contains(path_bounds[second])) {
-                const auto relation = point_in_polygon(paths[second].front(), paths[first]);
-                if (relation == PointInPolygonResult::IsOn) { return std::nullopt; }
-                first_contains_second = relation == PointInPolygonResult::IsInside;
+    for (std::size_t i = 0; i < contours.size(); ++i) {
+        for (std::size_t j = i + 1; j < contours.size(); ++j) {
+            const auto& first = contours[i];
+            const auto& second = contours[j];
+            if (!first.bounds.intersects(second.bounds)) { continue; }
+            auto relation = [&](const auto& outer, const auto& inner) {
+                return outer.bounds.contains(inner.bounds)
+                           ? point_in_polygon(inner.points.front(), outer.points)
+                           : PointInPolygonResult::IsOutside;
+            };
+            const auto first_contains = relation(first, second);
+            const auto second_contains = relation(second, first);
+            if (first_contains == PointInPolygonResult::IsOn ||
+                second_contains == PointInPolygonResult::IsOn ||
+                first_contains == second_contains) {
+                return false;
             }
-
-            auto second_contains_first = false;
-            if (path_bounds[second].contains(path_bounds[first])) {
-                const auto relation = point_in_polygon(paths[first].front(), paths[second]);
-                if (relation == PointInPolygonResult::IsOn) { return std::nullopt; }
-                second_contains_first = relation == PointInPolygonResult::IsInside;
-            }
-
-            if (first_contains_second == second_contains_first) { return std::nullopt; }
-            ++depths[first_contains_second ? second : first];
+            ++depths[first_contains == PointInPolygonResult::IsInside ? j : i];
         }
     }
-    return depths;
-}
-
-[[nodiscard]] auto orient_passthrough_paths_like_clip_solution(Paths64& paths,
-                                                               FillRule fill_rule) -> bool {
-    if (paths.size() == 1U) {
-        const auto signed_area = area(paths.front());
-        if (signed_area == 0.0) { return false; }
-        if (signed_area < 0.0) { std::reverse(paths.front().begin(), paths.front().end()); }
-        return true;
-    }
-
-    auto depths = containment_depths_for_paths(paths);
-    if (!depths) { return false; }
-
-    for (std::size_t index = 0; index < paths.size(); ++index) {
-        const auto should_be_positive = ((*depths)[index] % 2U) == 0U;
-        if (is_positive(paths[index]) != should_be_positive) {
-            // Reorienting by containment depth assumes parity (even-odd)
-            // semantics. Under NonZero a nested ring wound the same way as its
-            // parent is absorbed by the engine, not turned into a hole, so a
-            // parity mismatch means passthrough would change the result.
-            if (fill_rule != FillRule::EvenOdd) { return false; }
-            std::reverse(paths[index].begin(), paths[index].end());
+    for (std::size_t i = 0; i < contours.size(); ++i) {
+        if ((contours[i].signed_area > 0.0) != ((depths[i] % 2) == 0)) {
+            if (contours.size() != 1U && fill_rule != FillRule::EvenOdd) { return false; }
+            std::reverse(contours[i].points.begin(), contours[i].points.end());
         }
     }
     return true;
@@ -184,7 +165,7 @@ auto try_execute_containing_rectangle_intersection(const clip_request64& request
         return false;
     }
 
-    Paths64 passthrough;
+    std::vector<contained_contour> passthrough;
     passthrough.reserve(request.subjects.size());
     std::size_t total_points = 0;
     const auto point_threshold = contained_intersection_fast_path_point_threshold();
@@ -225,13 +206,20 @@ auto try_execute_containing_rectangle_intersection(const clip_request64& request
                 *next_path, contained_intersection_simplicity_scan_limit())) {
             return false;
         }
-        passthrough.push_back(std::move(*next_path));
+        const auto path_bounds = bounds(*next_path);
+        const auto signed_area = area(*next_path);
+        passthrough.push_back({std::move(*next_path), path_bounds, signed_area});
     }
 
-    if (!orient_passthrough_paths_like_clip_solution(passthrough, request.fill_rule)) {
-        return false;
+    if (!orient_contours(passthrough, request.fill_rule)) { return false; }
+    paths_rebuild<int64_t> transaction{result.closed};
+    transaction.prepare(passthrough.size(), [&](auto i) { return passthrough[i].points.size(); });
+    transaction.begin();
+    for (std::size_t i = 0; i < passthrough.size(); ++i) {
+        const auto& path = passthrough[i].points;
+        result.closed[i].insert(result.closed[i].end(), path.begin(), path.end());
     }
-    result.closed = std::move(passthrough);
+    transaction.finish();
     result.open.clear();
     return true;
 }

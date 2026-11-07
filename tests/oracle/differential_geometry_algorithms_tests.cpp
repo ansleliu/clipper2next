@@ -6,6 +6,7 @@
 #include "clipper2/clipper.h"
 #include "clipper2next/geometry/algorithms.h"
 
+#include <cfenv>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -86,6 +87,40 @@ TEST(Clipper2NextDifferentialGeometryAlgorithmsTests, EllipseParameterSweepMatch
             EXPECT_EQ(oracle::to_next_path(expected), actual);
         }
     }
+}
+
+TEST(Clipper2NextDifferentialGeometryAlgorithmsTests,
+     EllipseMatchesLegacyAcrossFloatingEnvironmentsAndMagnitudes) {
+    struct restore_rounding {
+        int mode{std::fegetround()};
+        ~restore_rounding() { std::fesetround(mode); }
+    } restore;
+    const std::vector<next::Point64> centers{
+        {0, 0}, {100, -80}, {1'000'000'000'000, -1'000'000'000'000},
+        {1LL << 51, -(1LL << 51)}, {1LL << 52, -(1LL << 52)},
+        {1LL << 53, -(1LL << 53)}};
+    const std::vector<std::pair<double, double>> radii{
+        {0.5, 0.5}, {1.5, 2.5}, {80.0, 40.0}, {125.5, 75.5}};
+    auto cases = std::size_t{};
+    for (const auto mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
+        ASSERT_EQ(std::fesetround(mode), 0);
+        for (const auto& center : centers) {
+            for (const auto& [radius_x, radius_y] : radii) {
+                for (const auto steps : {0U, 3U, 16U, 32U, 64U}) {
+                    SCOPED_TRACE(::testing::Message{} << "mode=" << mode << " center="
+                        << center.x << ',' << center.y << " radii=" << radius_x << ','
+                        << radius_y << " steps=" << steps);
+                    const auto expected = legacy::Ellipse(
+                        legacy::Point64{center.x, center.y}, radius_x, radius_y, steps);
+                    EXPECT_EQ(oracle::to_next_path(expected),
+                              next::make_ellipse(center, radius_x, radius_y, steps));
+                    EXPECT_EQ(std::fegetround(), mode);
+                    ++cases;
+                }
+            }
+        }
+    }
+    EXPECT_EQ(cases, 480U);
 }
 
 TEST(Clipper2NextDifferentialGeometryAlgorithmsTests, PathContainsPathMatchesLegacy) {

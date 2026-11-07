@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+import contextlib
+import io
+from unittest import mock
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from tools.release.correction_authority import AUTHORITY_POLICY
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +38,7 @@ def write_json(path: Path, payload: object) -> None:
 
 def contract_payload() -> dict[str, object]:
     return {
+        "authority": copy.deepcopy(AUTHORITY_POLICY),
         "schema_version": 1,
         "equivalence": {
             "coordinate_tolerance": 0,
@@ -247,7 +253,156 @@ def create_evidence_fixture(
     }
 
 
-class AlgorithmCoverageMatrixTests(unittest.TestCase):
+class DefaultCorrectionCoverageRulesTests(unittest.TestCase):
+    """Real contract rules after admission; these fixtures are not release receipts."""
+
+    REQUIRED = {
+        "offset_polygon": (
+            "Clipper2NextDifferentialOffsetTests.PolygonJoinTypeMatrixMatchesLegacy",
+            "Clipper2NextDifferentialOffsetTests.OpenJoinAndEndTypeMatrixMatchesLegacy",
+            "ExternalGeometryCorpus.OffsetVerificationCorpusExecutesAgainstLegacy",
+            "clipper2next_offset_contract_oracle_differential",
+            "clipper2next_offset_contract_oracle_corpus",
+            "clipper2next_offset_contract_oracle_benchmark",
+        ),
+        "triangulation": (
+            "Clipper2NextDifferentialTriangulationTests.ActualBoundaryContractsRecordBothEngines",
+            "ExternalGeometryCorpus.TriangulationVerificationCorpusExecutesAgainstLegacy",
+            "clipper2next_triangulation_contract_oracle",
+            "clipper2next_triangulation_contract_oracle_corpus",
+            "clipper2next_triangulation_contract_oracle_benchmark",
+        ),
+    }
+
+    def setUp(self) -> None:
+        from tools.audits import audit_algorithm_coverage_matrix as audit
+
+        self.audit = audit
+        self.contract = audit.load_contract()
+
+    def evaluate_tests(self, algorithm: str, statuses: dict[str, str]):
+        runtime = self.audit.JsonArtifact(
+            Path("post-admission-rule-fixture"), {"tests": statuses}, "fixture"
+        )
+        return self.audit._tests_evidence(self.contract.algorithms[algorithm], runtime)
+
+    def test_current_executed_requirements_are_sufficient(self) -> None:
+        for algorithm, names in self.REQUIRED.items():
+            with self.subTest(algorithm=algorithm):
+                result = self.evaluate_tests(algorithm, dict.fromkeys(names, "PASS"))
+                self.assertTrue(result.ok, result.details)
+                self.assertEqual("PASS", result.status)
+
+    def test_every_required_execution_must_pass(self) -> None:
+        for algorithm, names in self.REQUIRED.items():
+            for name in names:
+                for status in (None, "FAIL", "SKIP"):
+                    with self.subTest(algorithm=algorithm, name=name, status=status):
+                        statuses = dict.fromkeys(names, "PASS")
+                        if status is None:
+                            del statuses[name]
+                        else:
+                            statuses[name] = status
+                        result = self.evaluate_tests(algorithm, statuses)
+                        self.assertFalse(result.ok)
+                        self.assertEqual("BLOCKED", result.status)
+                        reason = (
+                            f"required test {name} is missing from runtime evidence"
+                            if status is None
+                            else f"required test {name} is {status}, not PASS"
+                        )
+                        self.assertEqual((reason,), result.details)
+
+    def test_records_and_legacy_execution_cannot_replace_independent_oracles(
+        self,
+    ) -> None:
+        for algorithm, names in self.REQUIRED.items():
+            with self.subTest(algorithm=algorithm):
+                oracles = [name for name in names if name.startswith("clipper2next_")]
+                statuses = dict.fromkeys(set(names) - set(oracles), "PASS")
+                statuses["clipper2next_triangulation_contract_producer"] = "PASS"
+                statuses[
+                    "Clipper2NextDifferentialOffsetTests.AbsoluteContractsRecordBothActualEngines"
+                ] = "PASS"
+                result = self.evaluate_tests(algorithm, statuses)
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    tuple(
+                        f"required test {name} is missing from runtime evidence"
+                        for name in oracles
+                    ),
+                    result.details,
+                )
+
+    def test_old_names_cannot_substitute_for_retained_or_replacement_tests(
+        self,
+    ) -> None:
+        substitutions = {
+            "offset_polygon": (
+                self.REQUIRED["offset_polygon"][1],
+                "Clipper2NextDifferentialOffsetTests.OpenEndTypeMatrixMatchesLegacy",
+            ),
+            "triangulation": (
+                self.REQUIRED["triangulation"][0],
+                "Clipper2NextDifferentialTriangulationTests.GeneratedSimpleCorpusMatchesLegacy",
+            ),
+        }
+        for algorithm, (current, old) in substitutions.items():
+            with self.subTest(algorithm=algorithm):
+                statuses = dict.fromkeys(self.REQUIRED[algorithm], "PASS")
+                del statuses[current]
+                statuses[old] = "PASS"
+                result = self.evaluate_tests(algorithm, statuses)
+                self.assertFalse(result.ok)
+                self.assertEqual(
+                    (f"required test {current} is missing from runtime evidence",),
+                    result.details,
+                )
+
+    def test_full_rule_view_keeps_nine_gated_and_two_intentional_partial_rows(
+        self,
+    ) -> None:
+        statuses, benchmarks = {}, []
+        for algorithm in self.contract.algorithms.values():
+            statuses.update(
+                dict.fromkeys(
+                    self.REQUIRED.get(algorithm.id, algorithm.required_tests), "PASS"
+                )
+            )
+            benchmarks.extend(algorithm.required_benchmarks)
+        runtime = self.audit.JsonArtifact(
+            Path("rule-runtime"),
+            {"tests": statuses, "benchmarks": benchmarks},
+            "fixture",
+        )
+        profile = self.audit.JsonArtifact(
+            Path("rule-profiles"),
+            {
+                "status": "PASS",
+                "profiles": [
+                    {"profile": name, "case_set": case_set}
+                    for name in self.contract.profiles
+                    for case_set in ("verification", "benchmark")
+                ],
+            },
+            "fixture",
+        )
+        admitted = self.audit.Evidence(True, "PASS", ("post-admission rule fixture",))
+        rows = [
+            self.audit.build_row(algorithm, runtime, profile, admitted)
+            for algorithm in self.contract.algorithms.values()
+        ]
+        self.assertEqual({"READY": 9, "PARTIAL": 2}, self.audit.status_counts(rows))
+        self.assertEqual(
+            {"geometry_algorithms", "scaling_and_transforms"},
+            {row.id for row in rows if row.status == "PARTIAL"},
+        )
+        for row in rows:
+            if row.status == "PARTIAL":
+                self.assertEqual("NOT_GATED", row.tests.status)
+
+
+class AlgorithmCoverageRulesTests(unittest.TestCase):
     def run_audit(
         self,
         fixture: dict[str, Path],
@@ -268,13 +423,20 @@ class AlgorithmCoverageMatrixTests(unittest.TestCase):
         if include_profile:
             command.extend(["--profile-report", str(fixture["profile_report"])])
         command.extend(extra_args)
-        return subprocess.run(
-            command,
-            cwd=ROOT,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
+        # These fixtures exercise report rules after admission, not producer provenance.
+        from tools.audits import audit_algorithm_coverage_matrix as audit
+
+        output, error = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(
+                audit, "_validate_runtime_evidence", audit._validate_runtime_view
+            ),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(error),
+        ):
+            code = audit.main(command[2:])
+        return subprocess.CompletedProcess(
+            command, code, output.getvalue(), error.getvalue()
         )
 
     def test_source_keywords_without_runtime_evidence_are_blocked(self) -> None:

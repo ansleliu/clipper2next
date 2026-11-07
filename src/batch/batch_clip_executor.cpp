@@ -58,17 +58,6 @@ auto clip_batch_requests_have_uniform_shape(std::span<const clip_request64> requ
     });
 }
 
-auto clip_batch_requests_are_parallel_safe(std::span<const clip_request64> requests) -> bool {
-    static_cast<void>(requests);
-    return true;
-}
-
-auto clip_batch_requests_are_parallel_safe(std::span<const prepared_clip_request64> requests)
-    -> bool {
-    static_cast<void>(requests);
-    return true;
-}
-
 auto clip_batch_work_profiles_are_uniform(std::span<const clip_batch_work_profile> profiles)
     -> bool {
     if (profiles.size() < 2U) { return true; }

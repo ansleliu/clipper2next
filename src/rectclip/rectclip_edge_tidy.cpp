@@ -124,8 +124,9 @@ auto assign_split_edges(bool clockwise_is_toward_larger,
 auto tidy_edges(std::size_t index,
                 rectclip_node_list& clockwise,
                 rectclip_node_list& counter_clockwise,
-                rectclip_node_list& results) -> void {
-    if (counter_clockwise.empty()) { return; }
+                rectclip_node_list& results) -> bool {
+    if (counter_clockwise.empty()) { return false; }
+    bool changed = false;
     const bool is_horizontal = (index == 1) || (index == 3);
     const bool clockwise_is_toward_larger = (index == 1) || (index == 2);
     std::size_t i = 0;
@@ -169,6 +170,7 @@ auto tidy_edges(std::size_t index,
             set_new_owner(p2, (*p1).owner_index);
         }
 
+        changed = true;
         reconnect_joined_ring(clockwise_is_toward_larger, *p1, *p1a, *p2, *p2a);
 
         if (!is_rejoining) {
@@ -194,6 +196,7 @@ auto tidy_edges(std::size_t index,
                            node_is_larger,
                            node2_is_larger);
     }
+    return changed;
 }
 
 }  // namespace clipper2next::internal

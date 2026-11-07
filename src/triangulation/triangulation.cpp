@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: BSL-1.0
 
 #include "clipper2next/triangulation/request.h"
+#include "api/private/checked_execution.h"
 
 #include "clipper2next/core.h"
 #include "clipper2next/geometry/scale.h"
 #include "triangulation/private/triangulation_executor.h"
 #include "triangulation/private/triangulation_cache.h"
+#include "triangulation/private/triangulation_operation.h"
+#include "triangulation/private/triangulation_simple.h"
 
+#include "triangulation/private/triangulation_result_builder.h"
 #include <cmath>
 #include <cstdint>
 
@@ -20,43 +24,90 @@ namespace {
 [[nodiscard]] auto paths_in_range(const Paths64& paths) -> bool {
     for (const auto& path : paths) {
         for (const auto& point : path) {
-            if (!coordinate_in_range(point.x) || !coordinate_in_range(point.y)) {
-                return false;
-            }
+            if (!coordinate_in_range(point.x) || !coordinate_in_range(point.y)) { return false; }
         }
     }
     return true;
 }
 
+template <class Result, class Project>
+auto publish_triangulation_graph(internal::triangulation_operation_lease& operation,
+                                 const triangulation_request64& request,
+                                 TriangulateResult status,
+                                 const internal::triangulation_mesh_view& graph,
+                                 Result& result, Project&& project) -> void {
+    if (result.triangles.capacity() == 0U) {
+        // Complete transient buffers before allocating persistent cache data.
+        // Publish only after both succeed; supplied buffers keep preparation first.
+        decltype(result.triangles) completed;
+        project(completed);
+        internal::store_cached_triangulation_graph(operation, request, status, graph);
+        result.triangles.swap(completed);
+    } else {
+        internal::store_cached_triangulation_graph(operation, request, status, graph);
+        project(result.triangles);
+    }
+    result.status = status;
+}
+
 auto triangulate_into_validated(const triangulation_request64& request,
                                 triangulation_result64& result) -> void {
-    if (internal::try_get_cached_triangulation(request, result)) { return; }
-    result.status = TriangulateResult::fail;
-    result.triangles =
-        internal::execute_triangulation(request.paths,
-                                        request.use_delaunay,
-                                        result.status);
-    internal::store_cached_triangulation(request, result);
+    auto operation = internal::triangulation_operation_lease{};
+    if (!request.use_delaunay) {
+        auto status = TriangulateResult::fail;
+        internal::execute_sweep_triangulation_into(operation, request.paths, status, result.triangles);
+        result.status = status;
+        return;
+    }
+    if (internal::try_get_cached_triangulation(operation, request, result)) { return; }
+    if (request.paths.size() == 1U && request.paths.front().size() == 4U &&
+        internal::try_project_cocircular_quad(operation, request.paths.front(), result.triangles)) {
+        result.status = TriangulateResult::success;
+        return;
+    }
+    auto status = TriangulateResult::fail;
+    const auto& graph =
+        internal::execute_triangulation_graph(operation, request.paths, request.use_delaunay, status);
+    publish_triangulation_graph(operation, request, status, graph, result,
+        [&](Paths64& output) { internal::build_triangulation_result_into(graph, output); });
+}
+
+auto triangulate_scaled_into(Paths64&& paths,
+                             bool use_delaunay,
+                             double inverse_scale,
+                             triangulation_resultd& result) -> void {
+    triangulation_request64 scaled_request;
+    scaled_request.paths = std::move(paths);
+    scaled_request.use_delaunay = use_delaunay;
+    auto operation = internal::triangulation_operation_lease{};
+    if (!use_delaunay) {
+        auto status = TriangulateResult::fail;
+        internal::execute_sweep_triangulation_into(operation, scaled_request.paths, status, result.triangles,
+                                                   inverse_scale);
+        result.status = status;
+        return;
+    }
+    if (internal::try_get_cached_triangulation(operation, scaled_request, result, inverse_scale)) { return; }
+    if (scaled_request.paths.size() == 1U && scaled_request.paths.front().size() == 4U &&
+        internal::try_project_cocircular_quad(operation, scaled_request.paths.front(),
+                                              result.triangles, inverse_scale)) {
+        result.status = TriangulateResult::success;
+        return;
+    }
+    auto status = TriangulateResult::fail;
+    const auto& graph =
+        internal::execute_triangulation_graph(operation, scaled_request.paths, use_delaunay, status);
+    publish_triangulation_graph(operation, scaled_request, status, graph, result,
+        [&](PathsD& output) {
+            internal::build_triangulation_result_into(graph, output, inverse_scale);
+        });
 }
 
 }  // namespace
 
-namespace internal {
-
-auto release_triangulation_thread_state() noexcept -> void {
-    release_triangulation_execution_thread_state();
-    release_triangulation_cache();
-}
-
-}  // namespace internal
-
 auto triangulate_into(const triangulation_request64& request, triangulation_result64& result)
     -> void {
-    if (!paths_in_range(request.paths)) {
-        result.status = TriangulateResult::fail;
-        result.triangles.clear();
-        return;
-    }
+    if (!paths_in_range(request.paths)) { return; }
     triangulate_into_validated(request, result);
 }
 
@@ -68,39 +119,27 @@ auto triangulate(const triangulation_request64& request) -> triangulation_result
 
 auto triangulate_checked(const triangulation_request64& request)
     -> clipper_result<triangulation_result64> {
-    if (!paths_in_range(request.paths)) {
-        return make_clipper_error<triangulation_result64>(clipper_error_code::coordinate_range);
-    }
-    triangulation_result64 result;
-    triangulate_into_validated(request, result);
-    return result;
+    return internal::checked_call<triangulation_result64>(
+        [&]() -> clipper_result<triangulation_result64> {
+            if (!paths_in_range(request.paths)) {
+                return make_clipper_error<triangulation_result64>(
+                    clipper_error_code::coordinate_range);
+            }
+            triangulation_result64 result;
+            triangulate_into_validated(request, result);
+            return result;
+        });
 }
 
 auto triangulate_into(const triangulation_requestd& request, triangulation_resultd& result)
     -> void {
-    result.status = TriangulateResult::fail;
-    result.triangles.clear();
-
     const auto precision = check_precision_range(request.decimal_precision);
     if (!precision.has_value()) { return; }
-
-    // Negative precision scales down, matching the minkowski/offset D-suffix
-    // entry points (pow semantics) rather than silently clamping to 1.0.
     const double scale = std::pow(10, precision.value());
-
     auto scaled_paths = scale_paths<int64_t, double>(request.paths, scale);
     if (!scaled_paths.has_value()) { return; }
-
-    const auto scaled_solution =
-        internal::execute_triangulation(scaled_paths.value(),
-                                        request.use_delaunay,
-                                        result.status);
-    auto unscaled = scale_paths<double, int64_t>(scaled_solution, 1 / scale);
-    if (!unscaled.has_value()) {
-        result.status = TriangulateResult::fail;
-        return;
-    }
-    result.triangles = std::move(unscaled.value());
+    triangulate_scaled_into(
+        std::move(scaled_paths.value()), request.use_delaunay, 1.0 / scale, result);
 }
 
 auto triangulate(const triangulation_requestd& request) -> triangulation_resultd {
@@ -111,29 +150,24 @@ auto triangulate(const triangulation_requestd& request) -> triangulation_resultd
 
 auto triangulate_checked(const triangulation_requestd& request)
     -> clipper_result<triangulation_resultd> {
-    triangulation_resultd result;
-    const auto precision = check_precision_range(request.decimal_precision);
-    if (!precision.has_value()) {
-        return make_clipper_error<triangulation_resultd>(precision.error());
-    }
+    return internal::checked_call<triangulation_resultd>(
+        [&]() -> clipper_result<triangulation_resultd> {
+            triangulation_resultd result;
+            const auto precision = check_precision_range(request.decimal_precision);
+            if (!precision.has_value()) {
+                return make_clipper_error<triangulation_resultd>(precision.error());
+            }
 
-    const double scale = std::pow(10, precision.value());
-    auto scaled_paths = scale_paths<int64_t, double>(request.paths, scale);
-    if (!scaled_paths.has_value()) {
-        return make_clipper_error<triangulation_resultd>(scaled_paths.error());
-    }
+            const double scale = std::pow(10, precision.value());
+            auto scaled_paths = scale_paths<int64_t, double>(request.paths, scale);
+            if (!scaled_paths.has_value()) {
+                return make_clipper_error<triangulation_resultd>(scaled_paths.error());
+            }
 
-    triangulation_request64 scaled_request;
-    scaled_request.paths = std::move(scaled_paths.value());
-    scaled_request.use_delaunay = request.use_delaunay;
-    auto scaled_result = triangulate(scaled_request);
-    auto unscaled = scale_paths<double, int64_t>(scaled_result.triangles, 1 / scale);
-    if (!unscaled.has_value()) {
-        return make_clipper_error<triangulation_resultd>(unscaled.error());
-    }
-    result.status = scaled_result.status;
-    result.triangles = std::move(unscaled.value());
-    return result;
+            triangulate_scaled_into(
+                std::move(scaled_paths.value()), request.use_delaunay, 1.0 / scale, result);
+            return result;
+        });
 }
 
 }  // namespace clipper2next

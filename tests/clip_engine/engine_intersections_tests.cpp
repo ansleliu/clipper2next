@@ -14,7 +14,7 @@ static_assert(sizeof(next::internal::IntersectNode) <=
               "point-plus-two-edge-reference size");
 
 TEST(Clipper2NextEngineIntersectionsTests, IntersectionsSortBottomUpThenLeftToRight) {
-    std::vector<next::internal::IntersectNode> nodes;
+    next::internal::engine_buffer<next::internal::IntersectNode> nodes;
     next::Point64 top_right{20, 10};
     next::Point64 bottom_left{5, 20};
     next::Point64 bottom_right{10, 20};
@@ -35,7 +35,7 @@ TEST(Clipper2NextEngineIntersectionsTests, IntersectionsSortKeepsEqualPointOrder
     next::internal::active_edge_node second_edge;
     next::internal::active_edge_node partner;
     next::Point64 point{10, 20};
-    std::vector<next::internal::IntersectNode> nodes;
+    next::internal::engine_buffer<next::internal::IntersectNode> nodes;
     nodes.emplace_back(first_edge, partner, point);
     nodes.emplace_back(second_edge, partner, point);
 
@@ -82,7 +82,7 @@ TEST(Clipper2NextEngineIntersectionsTests, IntersectionsSortLeavesSingleNodeUnto
     next::internal::active_edge_node first_edge;
     next::internal::active_edge_node second_edge;
     next::Point64 point{12, 34};
-    std::vector<next::internal::IntersectNode> nodes;
+    next::internal::engine_buffer<next::internal::IntersectNode> nodes;
     nodes.emplace_back(first_edge, second_edge, point);
 
     next::internal::sort_intersections(nodes);
@@ -152,7 +152,7 @@ TEST(Clipper2NextEngineIntersectionsTests,
      ContiguousUnitRunsPreserveSortedEdgesAndIntersectionGenerationOrder) {
     std::array<next::internal::active_edge_node, 8U> edge_storage;
     constexpr std::array<int64_t, 8U> top_xs{0, 30, 20, 10, 40, 50, 60, 70};
-    std::vector<next::internal::active_edge_node*> edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> edges;
     edges.reserve(edge_storage.size());
     for (std::size_t index = 0; index < edge_storage.size(); ++index) {
         auto& edge = edge_storage[index];
@@ -163,7 +163,7 @@ TEST(Clipper2NextEngineIntersectionsTests,
         edges.push_back(&edge);
     }
 
-    std::vector<next::internal::active_edge_node*> scratch;
+    next::internal::engine_buffer<next::internal::active_edge_node*> scratch;
     next::internal::IntersectNodeList nodes;
 
     ASSERT_TRUE(next::internal::build_intersection_list_from_contiguous_unit_runs(
@@ -194,7 +194,7 @@ TEST(Clipper2NextEngineIntersectionsTests,
      ContiguousUnitRunsCheckBoundariesBetweenAdjacentMergePairs) {
     std::array<next::internal::active_edge_node, 4U> edge_storage;
     constexpr std::array<int64_t, 4U> top_xs{0, 10, 5, 15};
-    std::vector<next::internal::active_edge_node*> edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> edges;
     for (std::size_t index = 0; index < edge_storage.size(); ++index) {
         auto& edge = edge_storage[index];
         edge.bottom = {static_cast<int64_t>(index * 10U), 10};
@@ -204,7 +204,7 @@ TEST(Clipper2NextEngineIntersectionsTests,
         edges.push_back(&edge);
     }
 
-    std::vector<next::internal::active_edge_node*> scratch;
+    next::internal::engine_buffer<next::internal::active_edge_node*> scratch;
     next::internal::IntersectNodeList nodes;
 
     ASSERT_TRUE(next::internal::build_intersection_list_from_contiguous_unit_runs(
@@ -222,7 +222,7 @@ TEST(Clipper2NextEngineIntersectionsTests,
      ContiguousUnitRunsHandleOddTailAfterFirstPassInExactOrder) {
     std::array<next::internal::active_edge_node, 3U> edge_storage;
     constexpr std::array<int64_t, 3U> top_xs{20, 10, 30};
-    std::vector<next::internal::active_edge_node*> edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> edges;
     for (std::size_t index = 0; index < edge_storage.size(); ++index) {
         auto& edge = edge_storage[index];
         edge.bottom = {static_cast<int64_t>(index * 10U), 10};
@@ -232,7 +232,7 @@ TEST(Clipper2NextEngineIntersectionsTests,
         edges.push_back(&edge);
     }
 
-    std::vector<next::internal::active_edge_node*> scratch;
+    next::internal::engine_buffer<next::internal::active_edge_node*> scratch;
     next::internal::IntersectNodeList nodes;
 
     ASSERT_TRUE(next::internal::build_intersection_list_from_contiguous_unit_runs(

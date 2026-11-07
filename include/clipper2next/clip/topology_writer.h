@@ -41,6 +41,10 @@ struct topology_ring_layout64 final {
     std::size_t point_count{};
 };
 
+// Source owners must remain immutable through return and cannot alias writer storage.
+// From the first begin attempt, any failure invokes cancel. cancel must not fail
+// or allocate, must be idempotent, clear the candidate, and retain diagnostics.
+// A successful finish publishes the result and is the last fallible writer call.
 template <typename Writer>
 concept topology_writer64_target = requires(Writer& writer,
                                              const topology_layout64& layout,

@@ -8,10 +8,10 @@ It intentionally contains only:
 - `normalized/benchmark/*.jsonl`
 - `normalized/full/overlay-candidates.jsonl`
 - `normalized/full/source-inventory.jsonl`
-- `manifests/*.csv|*.jsonl`
-- the legacy Clipper2 text corpora required by oracle tests
+- source and license CSV manifests in `manifests/`
 
-The full local corpus may live outside the repository, for example under
-`/data/clipper2next/geometry`, and can contain the much larger
-`normalized/full/shape-inputs.jsonl`. Keep this fixture small enough for pull
-request CI while preserving every release-gated profile.
+Configure oracle tests with the original legacy text inputs as described in the
+[test guide](../../../README.md). A full local corpus may live outside the
+repository and can contain the much larger `normalized/full/shape-inputs.jsonl`.
+Keep this fixture bounded for CI and write fetch reports to the local corpus
+or build output.

@@ -8,12 +8,12 @@ namespace clipper2next::internal {
 
 auto prepare_offset_group_state(offset_state& state,
                                 const offset_group& group,
-                                const offset_group_execution_options& options) -> void {
+                                const offset_group_execution_options& options,
+                                const double operation_delta) -> void {
     if (group.end_type == EndType::Polygon) {
-        if (!group.lowest_path_index.has_value()) { state.delta = std::abs(state.delta); }
-        state.group_delta = group.is_reversed ? -state.delta : state.delta;
+        state.group_delta = group.is_reversed ? -operation_delta : operation_delta;
     } else {
-        state.group_delta = std::abs(state.delta);
+        state.group_delta = std::abs(operation_delta);
     }
 
     state.temp_limit =

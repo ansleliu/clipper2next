@@ -31,7 +31,8 @@ public:
 private:
     using path_count_function = clipper_error_code (*)(const void*, std::size_t&) noexcept;
     using measure_path_function = clipper_error_code (*)(
-        const void*, std::size_t, path_source_contract::borrowed_path_measurement64&) noexcept;
+        const void*, std::size_t, path_source_contract::borrowed_path_measurement64&,
+        std::size_t) noexcept;
     using copy_path_function = clipper_error_code (*)(const void*,
                                                       std::size_t,
                                                       Point64*,

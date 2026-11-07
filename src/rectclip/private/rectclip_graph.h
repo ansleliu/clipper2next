@@ -26,8 +26,13 @@ struct rectclip_node final {
     rectclip_node_ref prev{};
 
     rectclip_node() = default;
-    explicit rectclip_node(Point64 point) noexcept
-        : pt(point) {}
+    explicit rectclip_node(Point64 point) noexcept : pt(point) {}
+
+    // Storage owns the complete node before the execution context links neighbours.
+    rectclip_node(Point64 point, std::size_t owner, rectclip_node_ref previous) noexcept
+        : pt(point), owner_index(owner),
+          next(previous ? previous->next : rectclip_node_ref{this}),
+          prev(previous ? previous : rectclip_node_ref{this}) {}
 };
 
 }  // namespace clipper2next::internal

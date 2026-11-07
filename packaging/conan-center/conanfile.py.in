@@ -14,6 +14,8 @@ required_conan_version = ">=2.20.0"
 class Clipper2NextConan(ConanFile):
     name = "clipper2next"
     package_type = "shared-library"
+    # Revision-owned sources outlive deduplicated package build directories.
+    no_copy_source = True
     license = "BSL-1.0"
     description = "Standalone C++23 integer polygon geometry library"
     url = "https://github.com/conan-io/conan-center-index"

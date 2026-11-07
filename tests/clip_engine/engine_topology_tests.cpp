@@ -104,6 +104,15 @@ TEST(Clipper2NextEngineTopologyTests,
     next::internal::output_point_node outer_fourth{{0, 10}, outer_owner};
     LinkRing(outer_first, outer_second, outer_third, outer_fourth);
 
+    const auto point_results = next::internal::points_in_output_polygon(
+        std::array{next::Point64{5, 5}, next::Point64{11, 5}}, &outer_first);
+    EXPECT_EQ(point_results[0], next::PointInPolygonResult::IsInside);
+    EXPECT_EQ(point_results[1], next::PointInPolygonResult::IsOutside);
+    const auto boundary_results = next::internal::points_in_output_polygon(
+        std::array{next::Point64{0, 5}, next::Point64{10, 10}}, &outer_third);
+    EXPECT_EQ(boundary_results[0], next::PointInPolygonResult::IsOn);
+    EXPECT_EQ(boundary_results[1], next::PointInPolygonResult::IsOn);
+
     next::internal::output_record_node inner_owner;
     next::internal::output_point_node inner_first{{0, 5}, inner_owner};
     next::internal::output_point_node inner_second{{5, 0}, inner_owner};

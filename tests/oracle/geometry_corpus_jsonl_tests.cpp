@@ -113,3 +113,12 @@ TEST(GeometryCorpusJsonl, BuildsBenchmarkPathFromRoot) {
     const auto path = clipper2next::tests::oracle::benchmark_profile_path(root, "overlay");
     EXPECT_EQ(path.generic_string(), "/data/geometry/normalized/benchmark/overlay.jsonl");
 }
+
+TEST(GeometryCorpusJsonl, RetainsDeclaredComparisonAuthorityBeforeExecution) {
+    const auto records = clipper2next::tests::oracle::parse_geometry_corpus_jsonl(
+        R"json({"id":"formal","operation":"offset.polygon","comparison_domain":"offset-correction-contract","contract_id":"exact-area-thin-bevel","authority_digest":"bound","expected":{"relation":"offset-correction-contract"}})json");
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_EQ(records.front().comparison_domain, "offset-correction-contract");
+    EXPECT_EQ(records.front().contract_id, "exact-area-thin-bevel");
+    EXPECT_EQ(records.front().authority_digest, "bound");
+}

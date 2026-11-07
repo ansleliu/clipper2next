@@ -8,23 +8,16 @@ auto rectclip_execution_context::add(Point64 point, bool start_new) -> rectclip_
     rectclip_node* result = nullptr;
 
     if (current_index == 0 || start_new) {
-        result = &context.op_container.emplace();
-        result->pt = point;
-        result->next = result;
-        result->prev = result;
+        result = &context.op_container.emplace(point, std::size_t{0}, rectclip_node_ref{});
         context.results.emplace_back(result);
     } else {
         --current_index;
         auto* previous = context.results[current_index].get();
         if (previous->pt == point) { return *previous; }
 
-        result = &context.op_container.emplace();
-        result->owner_index = current_index;
-        result->pt = point;
-        result->next = previous->next;
+        result = &context.op_container.emplace(point, current_index, rectclip_node_ref{previous});
         previous->next->prev = result;
         previous->next = result;
-        result->prev = previous;
         context.results[current_index] = result;
     }
 
@@ -50,29 +43,10 @@ auto rectclip_execution_context::get_next_location(const Path64& path,
                                                    rect_location& location,
                                                    size_t& index,
                                                    size_t high_index) -> void {
-    auto& context = *context_;
-    if (location != rect_location::Inside) {
-        location =
-            internal::next_external_location(context.rect, path, location, index, high_index);
-        return;
-    }
-
-    while (index <= high_index) {
-        if (path[index].x < context.rect.left) {
-            location = rect_location::Left;
-        } else if (path[index].x > context.rect.right) {
-            location = rect_location::Right;
-        } else if (path[index].y > context.rect.bottom) {
-            location = rect_location::Bottom;
-        } else if (path[index].y < context.rect.top) {
-            location = rect_location::Top;
-        } else {
-            static_cast<void>(add(path[index]));
-            ++index;
-            continue;
-        }
-        break;
-    }
+    advance_rectclip_location(context_->rect, path, location, index, high_index,
+        [this](std::span<const Point64> points) {
+            for (const auto& point : points) { static_cast<void>(add(point)); }
+        });
 }
 
 }  // namespace clipper2next::internal

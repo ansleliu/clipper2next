@@ -13,10 +13,63 @@ from tools.release.evidence_contract import (
     load_contract,
     release_gated_profile_ids,
 )
+from tools.release.correction_authority import (
+    AUTHORITY_POLICY,
+    validate_correction_performance,
+)
+
+
+class CorrectionAuthorityContractTests(unittest.TestCase):
+    @staticmethod
+    def measured_performance(platform: str, host: str, cv: float) -> dict:
+        return {
+            "status": "PASS", "max_regression_percent": 0,
+            "platform": platform, "host_name": host,
+            "required_product_pairs": ["product"],
+            "required_legacy_pairs": ["legacy"],
+            "product_pairs": [{"id": "product", "baseline_ns": 100,
+                               "candidate_ns": 100, "cv_percent": cv}],
+            "legacy_pairs": [{"id": "legacy", "legacy_ns": 120,
+                              "candidate_ns": 100, "cv_percent": cv}],
+        }
+
+    def test_authorized_windows_host_accepts_cv_boundary(self) -> None:
+        evidence = self.measured_performance("Windows", "DESKTOP-S2N5RLE", 30)
+        self.assertEqual([], validate_correction_performance(evidence))
+        evidence["product_pairs"][0]["cv_percent"] = 30.001
+        self.assertTrue(any("CV" in error for error in validate_correction_performance(evidence)))
+
+    def test_other_hosts_and_missing_identity_keep_five_percent(self) -> None:
+        for platform, host in (("Linux", "DESKTOP-S2N5RLE"),
+                               ("Windows", "another-host"), ("", "")):
+            with self.subTest(platform=platform, host=host):
+                evidence = self.measured_performance(platform, host, 5.001)
+                self.assertTrue(any("CV" in error for error in validate_correction_performance(evidence)))
+                for pairs in (evidence["product_pairs"], evidence["legacy_pairs"]):
+                    pairs[0]["cv_percent"] = 5
+                self.assertEqual([], validate_correction_performance(evidence))
+
+    def test_windows_cv_authorization_preserves_zero_regression_and_legacy_floor(self) -> None:
+        evidence = self.measured_performance("Windows", "DESKTOP-S2N5RLE", 20)
+        evidence["product_pairs"][0]["candidate_ns"] = 100.001
+        self.assertTrue(any("regression" in error for error in validate_correction_performance(evidence)))
+        evidence["product_pairs"][0]["candidate_ns"] = 100
+        evidence["legacy_pairs"][0]["legacy_ns"] = 119.999
+        self.assertTrue(any("speedup" in error for error in validate_correction_performance(evidence)))
+
+    def test_official_contract_requires_both_engines_and_fixed_domains(self) -> None:
+        path = Path(__file__).resolve().parents[1] / "release" / "release-evidence-contract.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIn("authority", payload)
+        payload["authority"]["engines"] = ["next"]
+        with temporary_contract(payload) as weakened:
+            with self.assertRaisesRegex(ValueError, "authority"):
+                load_contract(weakened)
 
 
 def minimal_contract() -> dict:
     return {
+        "authority": copy.deepcopy(AUTHORITY_POLICY),
         "schema_version": 1,
         "equivalence": {
             "coordinate_tolerance": 0,

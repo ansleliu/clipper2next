@@ -9,6 +9,32 @@
 
 namespace next = clipper2next;
 
+TEST(UnionComponentGuardTests, CorrectionSingletonFillAndCanonicalDirectionAgreeWithEngine) {
+    for (const bool negative : {false, true}) {
+        for (const bool reverse : {false, true}) {
+            for (const bool preserve : {false, true}) {
+                next::Path64 path{{0, 0}, {10, 0}, {10, 10}, {0, 10}};
+                if (negative) { std::reverse(path.begin(), path.end()); }
+                next::internal::clip_union_options options;
+                options.fill_rule = negative ? next::FillRule::Negative : next::FillRule::Positive;
+                options.options.reverse_solution = reverse;
+                options.options.preserve_collinear = preserve;
+                const auto result = next::internal::union_closed_paths(next::Paths64{path}, options);
+                EXPECT_DOUBLE_EQ(next::area(result), reverse ? -100 : 100);
+            }
+        }
+    }
+}
+
+TEST(UnionComponentGuardTests, CorrectionThinTriangleExactPositiveFill) {
+    const next::Path64 triangle{{0, 10000000000LL}, {1000003, 10000000001LL}, {1000002, 10000000001LL}};
+    next::internal::clip_union_options options;
+    options.fill_rule = next::FillRule::Positive;
+    auto path = triangle;
+    EXPECT_TRUE(next::internal::try_return_singleton_component_direct(path, options));
+    EXPECT_EQ(path, triangle);
+}
+
 namespace {
 
 [[nodiscard]] auto negative_square() -> next::Path64 {
@@ -38,7 +64,7 @@ TEST(UnionComponentGuardTests, ReverseSolutionSingletonCanReturnDirectlyWithReve
     options.options.reverse_solution = true;
 
     EXPECT_TRUE(next::internal::try_return_singleton_component_direct(path, options));
-    EXPECT_TRUE(next::is_positive(path));
+    EXPECT_FALSE(next::is_positive(path));
 }
 
 TEST(UnionComponentGuardTests, ReverseSolutionSingletonStillRequiresMatchingFillRule) {
@@ -65,7 +91,7 @@ TEST(UnionComponentGuardTests, SingletonComponentCanAppendDirectResult) {
     EXPECT_TRUE(next::internal::try_append_singleton_component_direct(path, options, result));
 
     ASSERT_EQ(result.closed.size(), 1U);
-    EXPECT_TRUE(next::is_positive(result.closed.front()));
+    EXPECT_FALSE(next::is_positive(result.closed.front()));
     EXPECT_TRUE(result.open.empty());
 }
 

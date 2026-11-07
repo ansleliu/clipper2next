@@ -2,12 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_ORACLE_ROOT = ROOT / "clipper2next" / "tests" / "oracle"
+sys.path.insert(0, str(ROOT))
+from tools.release.correction_authority import validate_qualification
+
+DEFAULT_ORACLE_ROOT = ROOT / "tests" / "oracle"
 SOURCE_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hpp", ".hh"}
 
 POSITIONAL_OPTIONS_RE = re.compile(r"path_equivalence_options\s*\{\s*([^,}\n]*)")
@@ -65,10 +70,19 @@ def main() -> int:
     )
     parser.add_argument("--root", default=str(DEFAULT_ORACLE_ROOT))
     parser.add_argument("--output")
+    parser.add_argument("--qualification", type=Path)
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
     findings = find_strict_oracle_findings(root)
+    if args.qualification:
+        try:
+            payload = json.loads(args.qualification.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("qualification must be an object")
+            findings.extend(validate_qualification(payload))
+        except (OSError, ValueError) as error:
+            findings.append(f"qualification error: {error}")
     output = "\n".join(findings)
     if output:
         output += "\n"

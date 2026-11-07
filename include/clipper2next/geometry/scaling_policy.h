@@ -43,7 +43,8 @@ template <typename Source>
     if (!std::isfinite(scaled)) { return false; }
     const auto guarded_min = static_cast<double>(MIN_COORD) + coordinate_rounding_guard;
     const auto guarded_max = static_cast<double>(MAX_COORD) - coordinate_rounding_guard;
-    const auto rounded = geotypes::roundToEven(scaled);
+    const auto rounded = geotypes::roundToNearest(
+        scaled, geotypes::CoordinateRounding::NearestAwayFromZero);
     return rounded >= guarded_min && rounded <= guarded_max;
 }
 

@@ -95,6 +95,46 @@ struct batch_recording_executor final {
 
 }  // namespace
 
+TEST(Clipper2NextDeterminismTests, CheckedRawBatchValidatesInInputOrderBeforeDispatch) {
+    const auto threshold = next::internal::clip_batch_parallel_threshold();
+    for (const auto count : {std::size_t{0}, std::size_t{1}, threshold - 1U, threshold, threshold + 1U}) {
+        for (const auto mixed : {false, true}) {
+            for (int invalid = 0; invalid != 4; ++invalid) {
+                SCOPED_TRACE(::testing::Message() << count << '/' << mixed << '/' << invalid);
+                auto requests = std::vector<next::clip_request64>(count);
+                for (std::size_t index = 0; index < count; ++index) {
+                    requests[index] = mixed ? make_generated_batch_request(static_cast<int>(index))
+                                            : make_clip_request(next::ClipType::Union,
+                                                {{{0, 0}, {10, 0}, {10, 10}, {0, 10}}});
+                }
+                if (count != 0U) {
+                    auto& first = requests[0];
+                    if (invalid == 0) { first.clip_type = static_cast<next::ClipType>(99); }
+                    if (invalid == 1) { first.fill_rule = static_cast<next::FillRule>(99); }
+                    if (invalid == 2) {
+                        first.options.intersection_policy.mode = static_cast<next::precision_mode>(99);
+                    }
+                    if (invalid == 3) { first.subjects = {{{next::MAX_COORD + 1, 0}}}; }
+                    if (count > 1U) {
+                        requests[1].subjects = {{{next::MAX_COORD + 1, 0}}};
+                        requests[1].fill_rule = static_cast<next::FillRule>(99);
+                    }
+                }
+                auto executor = batch_recording_executor{};
+                const auto result = next::clip_batch_checked(requests,
+                    next::sync_bulk_executor_ref{&executor, 4U, &execute_batch_chunks});
+                if (count == 0U) { EXPECT_TRUE(result); }
+                else {
+                    ASSERT_FALSE(result);
+                    EXPECT_EQ(result.error(), invalid == 3 ? next::clipper_error_code::coordinate_range
+                                                          : next::clipper_error_code::invalid_argument);
+                }
+                EXPECT_EQ(executor.invocation_count, 0U);
+            }
+        }
+    }
+}
+
 TEST(Clipper2NextDeterminismTests, PublicBatchClipPreservesRequestOrder) {
     std::vector<next::clip_request64> requests(2);
     requests[0].clip_type = next::ClipType::Union;

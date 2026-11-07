@@ -1,4 +1,5 @@
 #include "clipper2next/minkowski/request.h"
+#include "api/private/checked_execution.h"
 
 #include "clipper2next/geometry.h"
 #include "clipper2next/geometry/scale.h"
@@ -80,10 +81,12 @@ auto minkowski_sum(const minkowski_request64& request) -> Paths64 {
 }
 
 auto minkowski_sum_checked(const minkowski_request64& request) -> clipper_result<Paths64> {
-    if (!minkowski_request_in_range(request, true)) {
-        return make_clipper_error<Paths64>(clipper_error_code::coordinate_range);
-    }
-    return execute_minkowski64_validated(request, true);
+    return internal::checked_call<Paths64>([&]() -> clipper_result<Paths64> {
+        if (!minkowski_request_in_range(request, true)) {
+            return make_clipper_error<Paths64>(clipper_error_code::coordinate_range);
+        }
+        return execute_minkowski64_validated(request, true);
+    });
 }
 
 auto minkowski_sum(const minkowski_requestd& request) -> PathsD {
@@ -111,27 +114,28 @@ auto minkowski_sum(const minkowski_requestd& request) -> PathsD {
 }
 
 auto minkowski_sum_checked(const minkowski_requestd& request) -> clipper_result<PathsD> {
-    const auto precision = check_precision_range(request.decimal_precision);
-    if (!precision.has_value()) { return make_clipper_error<PathsD>(precision.error()); }
-    const double scale = std::pow(10, precision.value());
-    auto scaled_pattern = scale_path<int64_t, double>(request.pattern, scale);
-    if (!scaled_pattern.has_value()) { return make_clipper_error<PathsD>(scaled_pattern.error()); }
-    auto scaled_path = scale_path<int64_t, double>(request.path, scale);
-    if (!scaled_path.has_value()) { return make_clipper_error<PathsD>(scaled_path.error()); }
-    if (!minkowski_translation_in_range(scaled_pattern.value(), scaled_path.value(), true)) {
-        return make_clipper_error<PathsD>(clipper_error_code::coordinate_range);
-    }
-    auto quads = internal::build_minkowski_quads(
-        scaled_pattern.value(),
-        scaled_path.value(),
-        true,
-        request.is_closed);
-    const Paths64 unioned =
-        internal::union_minkowski_quads(std::move(quads), FillRule::NonZero);
-    auto unscaled = scale_paths<double, int64_t>(unioned, 1 / scale);
-    if (!unscaled.has_value()) { return make_clipper_error<PathsD>(unscaled.error()); }
-    // cppcheck-suppress returnStdMoveLocal
-    return std::move(unscaled.value());
+    return internal::checked_call<PathsD>([&]() -> clipper_result<PathsD> {
+        const auto precision = check_precision_range(request.decimal_precision);
+        if (!precision.has_value()) { return make_clipper_error<PathsD>(precision.error()); }
+        const double scale = std::pow(10, precision.value());
+        auto scaled_pattern = scale_path<int64_t, double>(request.pattern, scale);
+        if (!scaled_pattern.has_value()) {
+            return make_clipper_error<PathsD>(scaled_pattern.error());
+        }
+        auto scaled_path = scale_path<int64_t, double>(request.path, scale);
+        if (!scaled_path.has_value()) { return make_clipper_error<PathsD>(scaled_path.error()); }
+        if (!minkowski_translation_in_range(scaled_pattern.value(), scaled_path.value(), true)) {
+            return make_clipper_error<PathsD>(clipper_error_code::coordinate_range);
+        }
+        auto quads = internal::build_minkowski_quads(
+            scaled_pattern.value(), scaled_path.value(), true, request.is_closed);
+        const Paths64 unioned =
+            internal::union_minkowski_quads(std::move(quads), FillRule::NonZero);
+        auto unscaled = scale_paths<double, int64_t>(unioned, 1 / scale);
+        if (!unscaled.has_value()) { return make_clipper_error<PathsD>(unscaled.error()); }
+        // cppcheck-suppress returnStdMoveLocal
+        return std::move(unscaled.value());
+    });
 }
 
 auto minkowski_difference(const minkowski_request64& request) -> Paths64 {
@@ -143,10 +147,12 @@ auto minkowski_difference(const minkowski_request64& request) -> Paths64 {
 
 auto minkowski_difference_checked(const minkowski_request64& request)
     -> clipper_result<Paths64> {
-    if (!minkowski_request_in_range(request, false)) {
-        return make_clipper_error<Paths64>(clipper_error_code::coordinate_range);
-    }
-    return execute_minkowski64_validated(request, false);
+    return internal::checked_call<Paths64>([&]() -> clipper_result<Paths64> {
+        if (!minkowski_request_in_range(request, false)) {
+            return make_clipper_error<Paths64>(clipper_error_code::coordinate_range);
+        }
+        return execute_minkowski64_validated(request, false);
+    });
 }
 
 auto minkowski_difference(const minkowski_requestd& request) -> PathsD {
@@ -174,27 +180,28 @@ auto minkowski_difference(const minkowski_requestd& request) -> PathsD {
 }
 
 auto minkowski_difference_checked(const minkowski_requestd& request) -> clipper_result<PathsD> {
-    const auto precision = check_precision_range(request.decimal_precision);
-    if (!precision.has_value()) { return make_clipper_error<PathsD>(precision.error()); }
-    const double scale = std::pow(10, precision.value());
-    auto scaled_pattern = scale_path<int64_t, double>(request.pattern, scale);
-    if (!scaled_pattern.has_value()) { return make_clipper_error<PathsD>(scaled_pattern.error()); }
-    auto scaled_path = scale_path<int64_t, double>(request.path, scale);
-    if (!scaled_path.has_value()) { return make_clipper_error<PathsD>(scaled_path.error()); }
-    if (!minkowski_translation_in_range(scaled_pattern.value(), scaled_path.value(), false)) {
-        return make_clipper_error<PathsD>(clipper_error_code::coordinate_range);
-    }
-    auto quads = internal::build_minkowski_quads(
-        scaled_pattern.value(),
-        scaled_path.value(),
-        false,
-        request.is_closed);
-    const Paths64 unioned =
-        internal::union_minkowski_quads(std::move(quads), FillRule::NonZero);
-    auto unscaled = scale_paths<double, int64_t>(unioned, 1 / scale);
-    if (!unscaled.has_value()) { return make_clipper_error<PathsD>(unscaled.error()); }
-    // cppcheck-suppress returnStdMoveLocal
-    return std::move(unscaled.value());
+    return internal::checked_call<PathsD>([&]() -> clipper_result<PathsD> {
+        const auto precision = check_precision_range(request.decimal_precision);
+        if (!precision.has_value()) { return make_clipper_error<PathsD>(precision.error()); }
+        const double scale = std::pow(10, precision.value());
+        auto scaled_pattern = scale_path<int64_t, double>(request.pattern, scale);
+        if (!scaled_pattern.has_value()) {
+            return make_clipper_error<PathsD>(scaled_pattern.error());
+        }
+        auto scaled_path = scale_path<int64_t, double>(request.path, scale);
+        if (!scaled_path.has_value()) { return make_clipper_error<PathsD>(scaled_path.error()); }
+        if (!minkowski_translation_in_range(scaled_pattern.value(), scaled_path.value(), false)) {
+            return make_clipper_error<PathsD>(clipper_error_code::coordinate_range);
+        }
+        auto quads = internal::build_minkowski_quads(
+            scaled_pattern.value(), scaled_path.value(), false, request.is_closed);
+        const Paths64 unioned =
+            internal::union_minkowski_quads(std::move(quads), FillRule::NonZero);
+        auto unscaled = scale_paths<double, int64_t>(unioned, 1 / scale);
+        if (!unscaled.has_value()) { return make_clipper_error<PathsD>(unscaled.error()); }
+        // cppcheck-suppress returnStdMoveLocal
+        return std::move(unscaled.value());
+    });
 }
 
 }  // namespace clipper2next

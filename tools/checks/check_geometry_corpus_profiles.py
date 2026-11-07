@@ -25,20 +25,13 @@ from tools.release.evidence_contract import (
     load_contract,
     release_gated_profile_ids,
 )
+from tools.release.correction_authority import canonical_options, validate_authority
 
 
 _ALLOWED_PARTITIONS = {"development", "release-holdout"}
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _NUMBER_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _POINT_RE = re.compile(rf"({_NUMBER_RE})\s+({_NUMBER_RE})")
-_OPTION_KEYS = {
-    "fill_rule",
-    "join_type",
-    "end_type",
-    "is_closed",
-    "preserve_collinear",
-    "reverse_solution",
-}
 _FILL_RULES = {"even_odd", "non_zero", "positive", "negative"}
 _JOIN_TYPES = {"miter", "round", "square"}
 _END_TYPES = {"polygon", "joined", "butt", "square", "round"}
@@ -208,7 +201,7 @@ def _canonical_options(record: dict[str, Any]) -> dict[str, object]:
     inputs = record.get("inputs")
     if not isinstance(inputs, dict):
         return {}
-    return {key: inputs[key] for key in sorted(_OPTION_KEYS & set(inputs))}
+    return canonical_options(inputs)
 
 
 def _wkt_points(value: object) -> list[tuple[Decimal, Decimal]]:
@@ -666,8 +659,8 @@ def _validate_record_structure(
             errors,
         )
         _require(
-            generator.get("version") == 1,
-            f"{prefix}: generator version must be 1",
+            generator.get("version") == 2,
+            f"{prefix}: generator version must be 2",
             errors,
         )
 
@@ -787,6 +780,7 @@ def _validate_record_structure(
         )
 
     _validate_operation_and_options(record, profile, prefix, errors)
+    errors.extend(f"{prefix}: {error}" for error in validate_authority(record))
 
 
 def validate_profile_semantics(
@@ -869,7 +863,7 @@ def validate_profile_semantics(
     return errors
 
 
-def _twin_key(record: dict[str, Any]) -> tuple[str, str, str, str, str] | None:
+def _twin_key(record: dict[str, Any]) -> tuple[str, ...] | None:
     selector = record.get("selector")
     if not isinstance(selector, dict):
         return None
@@ -879,6 +873,9 @@ def _twin_key(record: dict[str, Any]) -> tuple[str, str, str, str, str] | None:
         record.get("operation"),
         record.get("canonical_input_digest"),
         record.get("canonical_options_digest"),
+        record.get("comparison_domain"),
+        record.get("contract_id"),
+        canonical_json_digest(record.get("expected")),
     )
     if not all(isinstance(value, str) and bool(value) for value in values):
         return None

@@ -43,6 +43,9 @@ struct geometry_corpus_record final {
     std::string end_type{};
     std::string expected_wkt{};
     std::string expected_relation{};
+    std::string comparison_domain{};
+    std::string contract_id{};
+    std::string authority_digest{};
     std::string expected_property{};
     std::string expected_geometry_type{};
     std::size_t expected_point_count{};
@@ -370,6 +373,9 @@ inline auto parse_optional_expected_bbox(std::string_view expected,
         record.id = json_string_field(line, "id");
         record.profile = json_string_field(line, "profile");
         record.operation = json_string_field(line, "operation");
+        record.comparison_domain = json_string_field(line, "comparison_domain");
+        record.contract_id = json_string_field(line, "contract_id");
+        record.authority_digest = json_string_field(line, "authority_digest");
         record.scenario = json_string_field(line, "scenario");
         record.lhs_wkt = json_string_field(line, "lhs_wkt");
         record.rhs_wkt = json_string_field(line, "rhs_wkt");

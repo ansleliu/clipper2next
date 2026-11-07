@@ -83,38 +83,4 @@ auto build_path64_into(output_point_node* output_point,
     return count != 0U && count == path.size();
 }
 
-auto build_pathd(output_point_node* output_point,
-                 bool reverse,
-                 bool is_open,
-                 PathD& path,
-                 double inverse_scale) -> bool {
-    if (!output_point || output_point->next == output_point ||
-        (!is_open && output_point->next == output_point->prev)) {
-        return false;
-    }
-
-    path.resize(0);
-    Point64 last_point;
-    output_point_node* current;
-    if (reverse) {
-        last_point = output_point->pt;
-        current = output_point->prev;
-    } else {
-        output_point = output_point->next;
-        last_point = output_point->pt;
-        current = output_point->next;
-    }
-    path.emplace_back(last_point.x * inverse_scale, last_point.y * inverse_scale);
-
-    while (current != output_point) {
-        if (current->pt != last_point) {
-            last_point = current->pt;
-            path.emplace_back(last_point.x * inverse_scale, last_point.y * inverse_scale);
-        }
-        current = reverse ? current->prev : current->next;
-    }
-
-    return is_open || path.size() != 3 || !is_very_small_triangle(*current);
-}
-
 }  // namespace clipper2next::internal

@@ -1,6 +1,7 @@
 #include "offset/private/offset_group_processor.h"
 
 #include "support/private/bulk_execution.h"
+#include "offset/private/offset_parallel_results.h"
 
 #include <algorithm>
 #include <utility>
@@ -9,10 +10,7 @@
 namespace clipper2next::internal {
 namespace {
 
-struct offset_path_chunk final {
-    std::size_t begin{};
-    std::size_t end{};
-};
+
 
 [[nodiscard]] auto has_minimum_point_count(
     const offset_group& group,
@@ -27,22 +25,9 @@ struct offset_path_chunk final {
     return minimum == 0U;
 }
 
-[[nodiscard]] auto has_joined_two_point_path(
-    const offset_group& group) -> bool {
-    if (group.end_type != EndType::Joined) {
-        return false;
-    }
-    for (auto index = std::size_t{}; index < group.path_count(); ++index) {
-        if (group.path(index).size() == 2U) {
-            return true;
-        }
-    }
-    return false;
-}
-
 [[nodiscard]] auto build_offset_chunks(
     const offset_group& group,
-    const std::size_t concurrency_limit)
+    const std::size_t concurrency_limit, scoped_workspace_charge& charge)
     -> std::vector<offset_path_chunk> {
     const auto paths_per_full_chunk_set =
         group.path_count() / 4U +
@@ -52,7 +37,7 @@ struct offset_path_chunk final {
         : concurrency_limit * 4U;
     auto remaining_points = std::size_t{};
     for (auto index = std::size_t{}; index < group.path_count(); ++index) {
-        remaining_points += group.path(index).size();
+        remaining_points = checked_size_add(remaining_points, group.path(index).size());
     }
 
     auto chunks = std::vector<offset_path_chunk>{};
@@ -61,7 +46,7 @@ struct offset_path_chunk final {
     while (begin < group.path_count()) {
         const auto remaining_chunks = chunk_count - chunks.size();
         const auto target =
-            (remaining_points + remaining_chunks - 1U) / remaining_chunks;
+            remaining_points / remaining_chunks + static_cast<std::size_t>(remaining_points % remaining_chunks != 0U);
         auto end = begin;
         auto chunk_points = std::size_t{};
         const auto latest_end =
@@ -71,20 +56,25 @@ struct offset_path_chunk final {
             chunk_points += group.path(end).size();
             ++end;
         }
+        auto growth = scoped_workspace_growth{charge, chunks.size() + 1U, sizeof(offset_path_chunk)};
         chunks.push_back({begin, end});
+        growth.commit();
         begin = end;
         remaining_points -= chunk_points;
     }
     return chunks;
 }
 
+
+
 struct offset_bulk_context final {
     const offset_group* group{};
     const offset_group_execution_options* options{};
     const std::vector<offset_path_chunk>* chunks{};
-    std::vector<path_set64>* results{};
+    offset_parallel_results* results{};
     bulk_failure_state* failure{};
     double delta{};
+    bool budgeted{};
 };
 
 void build_offset_chunk_range(
@@ -92,12 +82,14 @@ void build_offset_chunk_range(
     const std::size_t begin,
     const std::size_t end) noexcept {
     auto& context = *static_cast<offset_bulk_context*>(state);
-    auto local_state = offset_state{};
-    for (auto chunk_index = begin; chunk_index < end; ++chunk_index) {
-        context.failure->invoke([&] {
-            local_state.delta = context.delta;
+    context.failure->invoke([&] {
+        auto local_state = offset_state{};
+        for (auto chunk_index = begin; chunk_index < end; ++chunk_index) {
             const auto chunk = (*context.chunks)[chunk_index];
-            auto& output = (*context.results)[chunk_index];
+            auto& result = (*context.results)[chunk_index];
+            auto& output = result.paths;
+            auto scope = offset_resource_scope{local_state, context.budgeted ? &result.resources : nullptr,
+                context.budgeted ? &result.output_charge : nullptr};
             for (auto path_index = chunk.begin;
                  path_index < chunk.end;
                  ++path_index) {
@@ -106,10 +98,11 @@ void build_offset_chunk_range(
                     *context.group,
                     context.group->path(path_index),
                     *context.options,
+                    context.delta,
                     output);
             }
-        });
-    }
+        }
+    });
 }
 
 template <typename Output, typename Append>
@@ -121,27 +114,32 @@ void build_offset_group_paths_with_executor(
     const sync_bulk_executor_ref executor,
     Output& output,
     Append append) {
-    state.delta = delta;
     if (!executor.has_parallel_capability() ||
         executor.concurrency_limit() < offset_parallel_minimum_concurrency ||
         !is_offset_group_parallel_eligible(group)) {
-        build_offset_group_paths(state, group, options, nullptr, output);
+        build_offset_group_paths(state, group, options, delta, nullptr, output);
         return;
     }
 
+    // The previous serial group has finished. Workers own all scratch in
+    // this phase; retain only the parent raw output, bindings and capacity.
+    state.clear_scratch();
     const auto effective_concurrency = std::min(
         executor.concurrency_limit(),
         offset_parallel_maximum_concurrency);
+    auto* resources = state.path_out_charge.context();
+    auto chunks_charge = scoped_workspace_charge{resources, workspace_category::staging};
     const auto chunks =
-        build_offset_chunks(group, effective_concurrency);
-    auto results = std::vector<path_set64>(chunks.size());
+        build_offset_chunks(group, effective_concurrency, chunks_charge);
+    auto results = offset_parallel_results{resources, group, options, delta, chunks, effective_concurrency};
     auto failure = bulk_failure_state{};
     auto context = offset_bulk_context{
-        &group, &options, &chunks, &results, &failure, delta};
+        &group, &options, &chunks, &results, &failure, delta, resources != nullptr};
     const auto executor_error = executor.execute(
         chunks.size(), 1U,
         effective_concurrency,
         bulk_task_ref{&context, &build_offset_chunk_range});
+    results.observe_quiescence();
     if (const auto error = failure.error(); error != clipper_error_code::ok) {
         raise_clipper_error(error);
     }
@@ -149,17 +147,24 @@ void build_offset_group_paths_with_executor(
         raise_clipper_error(executor_error_code(executor_error));
     }
 
-    for (const auto& result : results) {
-        for (const auto path : result) {
+    results.prepare_merge();
+    for (std::size_t index = 0; index < results.size(); ++index) {
+        const auto& result = results[index];
+        for (const auto path : result.paths) {
+            constexpr auto descriptor_bytes = std::is_same_v<Output, path_set64>
+                ? sizeof(geotypes::PathDescriptor) : sizeof(Path64);
+            auto growth = state.reserve_output(path.size(), descriptor_bytes);
             append(output, path);
+            growth.commit();
         }
+        results.consume(index);
     }
 }
 
 } // namespace
 
 auto is_offset_group_parallel_eligible(const offset_group& group) -> bool {
-    if (group.path_count() == 0U || has_joined_two_point_path(group) ||
+    if (group.path_count() == 0U ||
         (group.end_type == EndType::Polygon &&
          !group.lowest_path_index.has_value())) {
         return false;

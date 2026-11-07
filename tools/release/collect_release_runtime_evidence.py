@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
@@ -12,20 +11,11 @@ import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.release.evidence_contract import (  # noqa: E402
-    DEFAULT_CONTRACT_PATH,
-    load_contract,
-)
-
-
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
-_PROFILE_REPORT_STATUSES = {"PASS", "FAIL"}
 
 
 def _read_bytes(path: Path, artifact: str) -> bytes:
@@ -34,10 +24,6 @@ def _read_bytes(path: Path, artifact: str) -> bytes:
         return artifact_path.read_bytes()
     except OSError as error:
         raise ValueError(f"cannot read {artifact} {artifact_path}: {error}") from error
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _local_name(tag: str) -> str:
@@ -129,43 +115,6 @@ def collect_benchmark_names(path: Path) -> set[str]:
     )
 
 
-def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"profile report contains duplicate JSON key {key!r}")
-        result[key] = value
-    return result
-
-
-def _reject_json_constant(value: str) -> None:
-    raise ValueError(f"profile report contains non-finite JSON number {value}")
-
-
-def _validate_profile_report(data: bytes, source: Path) -> dict[str, Any]:
-    try:
-        payload = json.loads(
-            data.decode("utf-8-sig"),
-            object_pairs_hook=_unique_json_object,
-            parse_constant=_reject_json_constant,
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid profile report JSON in {source}: {error}") from error
-    if not isinstance(payload, dict):
-        raise ValueError(f"profile report {source} must be a JSON object")
-    schema_version = payload.get("schema_version")
-    if isinstance(schema_version, bool) or schema_version != 1:
-        raise ValueError(f"profile report {source} must use schema_version 1")
-    for field in ("contract_sha256", "profile_sha256"):
-        value = payload.get(field)
-        if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
-            raise ValueError(f"profile report {source} has missing or invalid {field}")
-    status = payload.get("status")
-    if status not in _PROFILE_REPORT_STATUSES:
-        raise ValueError(f"profile report {source} has invalid status {status!r}")
-    return payload
-
-
 def _run_git(repository_root: Path, *arguments: str) -> str:
     try:
         result = subprocess.run(
@@ -199,59 +148,44 @@ def collect_git_state(repository_root: Path) -> dict[str, str | bool]:
         root,
         "status",
         "--porcelain=v1",
-        "--untracked-files=normal",
+        "--untracked-files=no",
     )
     return {"commit": commit, "dirty": bool(porcelain)}
 
 
 def build_runtime_evidence(
-    *,
-    contract_path: Path,
-    profile_report_path: Path,
-    ctest_junit_path: Path,
-    benchmark_list_path: Path,
-    repository_root: Path,
+    *, producer_manifest: Path, repository_root: Path
 ) -> dict[str, object]:
-    """Build evidence bound to the exact artifacts that were parsed."""
+    """Validate only evidence sealed by the same-run producer; never re-sign logs."""
+    from tools.release.correction_run import validate_producer
+    from tools.release.source_inventory import file_record
 
-    contract_file = Path(contract_path)
-    profile_report_file = Path(profile_report_path)
-    junit_file = Path(ctest_junit_path)
-    benchmark_file = Path(benchmark_list_path)
-
-    contract = load_contract(contract_file)
-    profile_report_bytes = _read_bytes(profile_report_file, "profile report")
-    _validate_profile_report(profile_report_bytes, profile_report_file)
-    junit_bytes = _read_bytes(junit_file, "CTest JUnit XML")
-    tests = _parse_ctest_results(junit_bytes, junit_file)
-    benchmark_bytes = _read_bytes(
-        benchmark_file,
-        "benchmark registration list",
-    )
-    benchmarks = _parse_benchmark_names(benchmark_bytes, benchmark_file)
-    git = collect_git_state(repository_root)
-
-    input_paths = {
-        "contract": str(contract_file.resolve()),
-        "profile_report": str(profile_report_file.resolve()),
-        "ctest_junit": str(junit_file.resolve()),
-        "benchmark_list": str(benchmark_file.resolve()),
+    return {
+        **validate_producer(producer_manifest, repository_root),
+        "producer_manifest": file_record(producer_manifest),
     }
-    input_sha256 = {
-        "contract": contract.sha256,
-        "profile_report": _sha256(profile_report_bytes),
-        "ctest_junit": _sha256(junit_bytes),
-        "benchmark_list": _sha256(benchmark_bytes),
+
+
+def runtime_projection(evidence: dict) -> dict:
+    """Coverage rules consume this view only after producer validation."""
+    records = {
+        name: evidence[name]
+        for name in ("contract", "profile_report", "ctest_junit", "benchmark_list")
     }
     return {
         "schema_version": 1,
-        "contract_sha256": contract.sha256,
-        "profile_report_sha256": input_sha256["profile_report"],
-        "git": git,
-        "tests": tests,
-        "benchmarks": sorted(benchmarks),
-        "inputs": input_paths,
-        "input_sha256": input_sha256,
+        "contract_sha256": records["contract"]["sha256"],
+        "profile_report_sha256": records["profile_report"]["sha256"],
+        "git": {
+            "commit": evidence["source"]["commit"],
+            "dirty": evidence["source"]["tracked_dirty"],
+        },
+        "tests": evidence["tests"],
+        "benchmarks": sorted(
+            collect_benchmark_names(Path(records["benchmark_list"]["path"]))
+        ),
+        "inputs": {name: record["path"] for name, record in records.items()},
+        "input_sha256": {name: record["sha256"] for name, record in records.items()},
     }
 
 
@@ -288,10 +222,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Collect machine-readable release runtime evidence."
     )
-    parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT_PATH)
-    parser.add_argument("--ctest-junit", type=Path, required=True)
-    parser.add_argument("--benchmark-list", type=Path, required=True)
-    parser.add_argument("--profile-report", type=Path, required=True)
+    parser.add_argument("--producer-manifest", type=Path, required=True)
     parser.add_argument("--repository-root", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path, required=True)
     return parser
@@ -301,10 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         evidence = build_runtime_evidence(
-            contract_path=args.contract,
-            profile_report_path=args.profile_report,
-            ctest_junit_path=args.ctest_junit,
-            benchmark_list_path=args.benchmark_list,
+            producer_manifest=args.producer_manifest,
             repository_root=args.repository_root,
         )
         _write_json(args.output, evidence)
@@ -314,8 +242,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"runtime_evidence={args.output.resolve()}")
     print(f"tests={len(evidence['tests'])}")
-    print(f"benchmarks={len(evidence['benchmarks'])}")
-    print(f"git_dirty={str(evidence['git']['dirty']).lower()}")
+    print(f"scope={evidence['scope']}")
+    print(f"run_id={evidence['run_id']}")
     return 0
 
 

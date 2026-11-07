@@ -7,51 +7,13 @@
 #include "clip/private/clip_request_validation.h"
 #include "clip/private/prepared_clip_runtime_data.h"
 #include "support/private/checked_size.h"
+#include "geometry/private/rectangle_certificate.h"
 
-#include <algorithm>
-#include <array>
 #include <memory>
-#include <optional>
 #include <utility>
 
 namespace clipper2next {
 namespace {
-
-[[nodiscard]] auto path_as_axis_aligned_rect(const Path64& path) -> std::optional<Rect64> {
-    if (path.size() != 4U) { return std::nullopt; }
-
-    std::array<int64_t, 4U> xs{};
-    std::array<int64_t, 4U> ys{};
-    for (std::size_t index = 0; index < path.size(); ++index) {
-        xs[index] = path[index].x;
-        ys[index] = path[index].y;
-    }
-
-    const auto [min_x, max_x] = std::minmax_element(xs.begin(), xs.end());
-    const auto [min_y, max_y] = std::minmax_element(ys.begin(), ys.end());
-    Rect64 rect{*min_x, *min_y, *max_x, *max_y};
-    if (rect.is_empty()) { return std::nullopt; }
-
-    const std::array<Point64, 4U> corners{
-        Point64{rect.left, rect.top},
-        Point64{rect.right, rect.top},
-        Point64{rect.right, rect.bottom},
-        Point64{rect.left, rect.bottom},
-    };
-    for (const auto& corner : corners) {
-        if (std::find(path.begin(), path.end(), corner) == path.end()) { return std::nullopt; }
-    }
-
-    // Containing all four corners is not enough: a diagonal ordering such as
-    // (TL, BR, TR, BL) is a self-intersecting bowtie, not a rectangle. Require
-    // every edge to be axis-aligned (consecutive points share exactly one axis).
-    for (std::size_t index = 0; index < path.size(); ++index) {
-        const auto& current = path[index];
-        const auto& next = path[(index + 1U) % path.size()];
-        if (current.x != next.x && current.y != next.y) { return std::nullopt; }
-    }
-    return rect;
-}
 
 [[nodiscard]] auto point_count(const Paths64& paths) -> std::size_t {
     std::size_t count = 0;
@@ -72,19 +34,72 @@ auto build_clip_request_metadata(const clip_request64& request) -> clip_request_
     metadata.open_subject_point_count = point_count(request.open_subjects);
     metadata.clip_point_count = point_count(request.clips);
     if (request.subjects.size() == 1U) {
-        metadata.single_subject_rect = path_as_axis_aligned_rect(request.subjects.front());
+        if (const auto rectangle = classify_axis_aligned_rectangle(request.subjects.front())) {
+            metadata.single_subject_rect.emplace(rectangle->bounds.left, rectangle->bounds.top,
+                rectangle->bounds.right, rectangle->bounds.bottom);
+        }
     }
     if (request.clips.size() == 1U) {
-        metadata.single_clip_rect = path_as_axis_aligned_rect(request.clips.front());
+        if (const auto rectangle = classify_axis_aligned_rectangle(request.clips.front())) {
+            metadata.single_clip_rect.emplace(rectangle->bounds.left, rectangle->bounds.top,
+                rectangle->bounds.right, rectangle->bounds.bottom);
+        }
     }
     return metadata;
 }
 
 }  // namespace internal
 
+auto prepared_clip_request64::operator=(const prepared_clip_request64& other)
+    -> prepared_clip_request64& {
+    if (this == &other) { return *this; }
+    auto staged = prepared_clip_request64{other};
+    swap(staged);
+    return *this;
+}
+
+prepared_clip_request64::prepared_clip_request64(prepared_clip_request64&& other) noexcept
+    : request_(std::move(other.request_)),
+      metadata_(std::move(other.metadata_)),
+      runtime_data_(std::move(other.runtime_data_)) {
+    other.reset();
+}
+
+auto prepared_clip_request64::operator=(prepared_clip_request64&& other) noexcept
+    -> prepared_clip_request64& {
+    if (this == &other) { return *this; }
+    swap(other);
+    other.reset();
+    return *this;
+}
+
+auto prepared_clip_request64::swap(prepared_clip_request64& other) noexcept -> void {
+    using std::swap;
+    swap(request_.clip_type, other.request_.clip_type);
+    swap(request_.fill_rule, other.request_.fill_rule);
+    request_.subjects.swap(other.request_.subjects);
+    request_.open_subjects.swap(other.request_.open_subjects);
+    request_.clips.swap(other.request_.clips);
+    swap(request_.options, other.request_.options);
+    swap(metadata_, other.metadata_);
+    runtime_data_.swap(other.runtime_data_);
+}
+
+auto prepared_clip_request64::reset() noexcept -> void {
+    request_.clip_type = ClipType::NoClip;
+    request_.fill_rule = FillRule::EvenOdd;
+    request_.subjects.clear();
+    request_.open_subjects.clear();
+    request_.clips.clear();
+    request_.options = execution_options{.preserve_collinear = true};
+    metadata_ = clip_request_metadata64{};
+    runtime_data_.reset();
+}
+
 auto prepare_clip_request(clip_request64 request) -> prepared_clip_request64 {
-    if (!internal::clip_request_in_range(request)) {
-        return prepared_clip_request64{std::move(request), clip_request_metadata64{}, {}};
+    if (const auto error = internal::validate_clip_request(request);
+        error != clipper_error_code::ok) {
+        raise_clipper_error(error);
     }
 
     auto metadata = internal::build_clip_request_metadata(request);

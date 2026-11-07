@@ -13,10 +13,23 @@ auto get_segment_intersection(const Point64& first_start,
                               const Point64& second_start,
                               const Point64& second_end,
                               Point64& intersection) -> bool {
-    const auto first_sign =
-        cross_product_sign_in_clipper_range(first_start, second_start, second_end);
-    const auto second_sign =
-        cross_product_sign_in_clipper_range(first_end, second_start, second_end);
+    int first_sign;
+    int second_sign;
+    // Rectangle sides have one zero displacement. Their supporting-line
+    // orientation is an exact coordinate comparison, including reversed and
+    // zero-length sides, and needs no general wide products.
+    if (second_start.x == second_end.x) {
+        const auto direction = (second_end.y > second_start.y) - (second_end.y < second_start.y);
+        first_sign = ((second_start.x > first_start.x) - (second_start.x < first_start.x)) * direction;
+        second_sign = ((second_start.x > first_end.x) - (second_start.x < first_end.x)) * direction;
+    } else if (second_start.y == second_end.y) {
+        const auto direction = (second_start.x > second_end.x) - (second_start.x < second_end.x);
+        first_sign = ((second_start.y > first_start.y) - (second_start.y < first_start.y)) * direction;
+        second_sign = ((second_start.y > first_end.y) - (second_start.y < first_end.y)) * direction;
+    } else {
+        first_sign = cross_product_sign_in_clipper_range(first_start, second_start, second_end);
+        second_sign = cross_product_sign_in_clipper_range(first_end, second_start, second_end);
+    }
     if (first_sign == 0) {
         intersection = first_start;
         if (second_sign == 0) { return false; }

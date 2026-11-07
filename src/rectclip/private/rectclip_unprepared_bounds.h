@@ -1,21 +1,24 @@
 #pragma once
 
-#include "rectclip/private/rectclip_unprepared_runner.h"
+#include "rectclip/private/rectclip_path_bounds.h"
 
 #if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
 #include <immintrin.h>
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_DISPATCH 1
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_TARGET __attribute__((target("avx2")))
+#define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_INLINE inline __attribute__((target("avx2"), always_inline))
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_MSVC_AVX2_DISPATCH 0
 #elif defined(_MSC_VER) && defined(_M_X64)
 #include <immintrin.h>
 #include <intrin.h>
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_DISPATCH 1
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_TARGET __declspec(noinline)
+#define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_INLINE __forceinline
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_MSVC_AVX2_DISPATCH 1
 #else
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_DISPATCH 0
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_TARGET
+#define CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_INLINE inline
 #define CLIPPER2NEXT_RECTCLIP_UNPREPARED_MSVC_AVX2_DISPATCH 0
 #endif
 
@@ -25,29 +28,17 @@
 namespace clipper2next::internal {
 namespace {
 
-[[nodiscard]] auto coordinate_in_range(std::int64_t value) -> bool {
-    constexpr auto span =
-        static_cast<std::uint64_t>(MAX_COORD) - static_cast<std::uint64_t>(MIN_COORD);
-    return static_cast<std::uint64_t>(value) - static_cast<std::uint64_t>(MIN_COORD) <= span;
-}
-
-[[nodiscard]] auto path_bounds_scalar(
-    const Path64& path, bool check_coordinate_range, Rect64& bounds) -> bool {
-    if (path.empty()) { return false; }
-    auto min_x = path.front().x;
-    auto max_x = path.front().x;
-    auto min_y = path.front().y;
-    auto max_y = path.front().y;
-    for (auto point = path.begin() + 1; point != path.end(); ++point) {
-        min_x = std::min(min_x, point->x);
-        max_x = std::max(max_x, point->x);
-        min_y = std::min(min_y, point->y);
-        max_y = std::max(max_y, point->y);
+template<bool CheckRange>
+[[nodiscard]] auto path_set_bounds_scalar(
+    const Paths64& paths, std::vector<Rect64>& path_bounds) -> bool {
+    for (std::size_t index = 0; index < paths.size(); ++index) {
+        if (paths[index].empty()) {
+            path_bounds[index] = Rect64::invalid_rect();
+            continue;
+        }
+        if (!rectclip_path_bounds_scalar(paths[index], CheckRange, path_bounds[index])) { return false; }
     }
-    bounds = {min_x, min_y, max_x, max_y};
-    return !check_coordinate_range ||
-           (coordinate_in_range(min_x) && coordinate_in_range(min_y) &&
-            coordinate_in_range(max_x) && coordinate_in_range(max_y));
+    return true;
 }
 
 #if CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_DISPATCH
@@ -79,12 +70,13 @@ struct point_xy final {
     return supported;
 }
 
-[[nodiscard]] CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_TARGET auto path_bounds_avx2(
+[[nodiscard]] CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_INLINE auto path_bounds_avx2(
     const Path64& path, bool check_coordinate_range, Rect64& bounds) -> bool {
     if constexpr (sizeof(Point64) != sizeof(point_xy)) {
-        return path_bounds_scalar(path, check_coordinate_range, bounds);
+        return rectclip_path_bounds_scalar(path, check_coordinate_range, bounds);
     } else {
-        if (path.size() < 2U) { return path_bounds_scalar(path, check_coordinate_range, bounds); }
+        // The eight-point reduction needs its initial pair plus eight points.
+        if (path.size() < rectclip_vector_bounds_minimum_points) { return rectclip_path_bounds_scalar(path, check_coordinate_range, bounds); }
         auto minimums = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(path.data()));
         auto maximums = minimums;
         auto secondary_minimums = minimums;
@@ -161,38 +153,64 @@ struct point_xy final {
         }
         bounds = {min_x, min_y, max_x, max_y};
         return !check_coordinate_range ||
-               (coordinate_in_range(min_x) && coordinate_in_range(min_y) &&
-                coordinate_in_range(max_x) && coordinate_in_range(max_y));
+               (rectclip_coordinate_in_range(min_x) && rectclip_coordinate_in_range(min_y) &&
+                rectclip_coordinate_in_range(max_x) && rectclip_coordinate_in_range(max_y));
     }
 }
+
+[[nodiscard]] CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_TARGET auto single_path_bounds_avx2(
+    const Path64& path, bool check_coordinate_range, Rect64& bounds) -> bool {
+    return path_bounds_avx2(path, check_coordinate_range, bounds);
+}
+
+template<bool CheckRange>
+[[nodiscard]] CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_TARGET auto path_set_bounds_avx2(
+    const Paths64& paths, std::vector<Rect64>& path_bounds) -> bool {
+    for (std::size_t index = 0; index < paths.size(); ++index) {
+        if (paths[index].empty()) {
+            path_bounds[index] = Rect64::invalid_rect();
+            continue;
+        }
+        if (!path_bounds_avx2(paths[index], CheckRange, path_bounds[index])) { return false; }
+    }
+    return true;
+}
+
 #endif
 
 }  // namespace
 
-auto rectclip_unprepared_avx2_supported() noexcept -> bool {
+auto rectclip_large_path_bounds(const Path64& path, bool check_coordinate_range,
+                          Rect64& bounds) -> bool {
 #if CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_DISPATCH
-    return cpu_supports_avx2();
-#else
-    return false;
+    if (cpu_supports_avx2()) {
+        return single_path_bounds_avx2(path, check_coordinate_range, bounds);
+    }
 #endif
+    return rectclip_path_bounds_scalar(path, check_coordinate_range, bounds);
 }
 
-auto rectclip_unprepared_path_bounds_scalar(
-    const Path64& path, bool check_coordinate_range, Rect64& bounds) -> bool {
-    return path_bounds_scalar(path, check_coordinate_range, bounds);
-}
-
-auto rectclip_unprepared_path_bounds_avx2(
-    const Path64& path, bool check_coordinate_range, Rect64& bounds) -> bool {
+auto build_rectclip_path_bounds(const Paths64& paths, bool check_coordinate_range,
+                               std::vector<Rect64>& path_bounds) -> bool {
+    path_bounds.resize(paths.size());
+    auto valid = false;
 #if CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_DISPATCH
-    return path_bounds_avx2(path, check_coordinate_range, bounds);
-#else
-    return path_bounds_scalar(path, check_coordinate_range, bounds);
+    if (cpu_supports_avx2()) {
+        valid = check_coordinate_range ? path_set_bounds_avx2<true>(paths, path_bounds)
+                                      : path_set_bounds_avx2<false>(paths, path_bounds);
+    } else
 #endif
+    {
+        valid = check_coordinate_range ? path_set_bounds_scalar<true>(paths, path_bounds)
+                                      : path_set_bounds_scalar<false>(paths, path_bounds);
+    }
+    if (!valid) { path_bounds.clear(); }
+    return valid;
 }
 
 }  // namespace clipper2next::internal
 
 #undef CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_DISPATCH
 #undef CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_TARGET
+#undef CLIPPER2NEXT_RECTCLIP_UNPREPARED_AVX2_INLINE
 #undef CLIPPER2NEXT_RECTCLIP_UNPREPARED_MSVC_AVX2_DISPATCH

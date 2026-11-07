@@ -35,10 +35,10 @@ TEST(Clipper2NextValueTypeApiTests, RectFreeFunctionsMirrorValueSemantics) {
     EXPECT_EQ(doubled, next::rect64(0, 0, 20, 40));
 }
 
-TEST(Clipper2NextValueTypeApiTests, RectScaledRoundsIntegralCoordinatesToEven) {
+TEST(Clipper2NextValueTypeApiTests, RectScaledMatchesLegacyIntegralTruncation) {
     const next::rect64 rect{0, 0, 3, 5};
 
-    EXPECT_EQ(next::scaled(rect, 0.5), next::rect64(0, 0, 2, 2));
+    EXPECT_EQ(next::scaled(rect, 0.5), next::rect64(0, 0, 1, 2));
 }
 
 TEST(Clipper2NextValueTypeApiTests, PolygonTreeUsesStableNodeIds) {

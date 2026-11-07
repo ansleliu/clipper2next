@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <type_traits>
+#include <utility>
 
 #include "triangulation/private/triangulation_context.h"
 
@@ -47,4 +49,31 @@ TEST(Clipper2NextTriangulationContextTests, ReleaseReturnsRetainedStorage) {
     EXPECT_EQ(context.vertices.capacity(), 0U);
     EXPECT_EQ(context.edges.capacity(), 0U);
     EXPECT_EQ(context.triangles.capacity(), 0U);
+}
+
+TEST(Clipper2NextTriangulationContextTests, RuntimeTopologyViewsDoNotExposeRawPointerFields) {
+    using next::internal::triangulation_context;
+    using next::internal::triangulation_edge;
+    using next::internal::triangulation_edge_list;
+    using next::internal::triangulation_triangle;
+    using next::internal::triangulation_triangle_list;
+    using next::internal::triangulation_vertex;
+    using next::internal::triangulation_vertex_list;
+
+    static_assert(!std::is_pointer_v<triangulation_edge_list::value_type>);
+    static_assert(!std::is_pointer_v<triangulation_vertex_list::value_type>);
+    static_assert(!std::is_pointer_v<triangulation_triangle_list::value_type>);
+    static_assert(!std::is_pointer_v<decltype(std::declval<triangulation_edge>().first)>);
+    static_assert(!std::is_pointer_v<decltype(std::declval<triangulation_edge>().second)>);
+    static_assert(!std::is_pointer_v<decltype(std::declval<triangulation_edge>().vL)>);
+    static_assert(!std::is_pointer_v<decltype(std::declval<triangulation_edge>().triA)>);
+    static_assert(!std::is_pointer_v<decltype(std::declval<triangulation_edge>().nextE)>);
+    static_assert(!std::is_pointer_v<decltype(std::declval<triangulation_triangle>().edges[0])>);
+    static_assert(!std::is_pointer_v<
+                  decltype(std::declval<triangulation_context>().pending_delaunay)::value_type>);
+    static_assert(!std::is_pointer_v<
+                  decltype(std::declval<triangulation_context>().boundary_events)::value_type>);
+    static_assert(!std::is_pointer_v<
+                  decltype(std::declval<triangulation_context>().local_minima)::value_type>);
+    static_assert(!std::is_pointer_v<decltype(std::declval<triangulation_context>().first_active)>);
 }

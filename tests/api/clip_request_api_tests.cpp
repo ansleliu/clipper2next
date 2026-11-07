@@ -5,9 +5,97 @@
 #include <gtest/gtest.h>
 
 #include <cfenv>
+#include "clipper2next/offset/operations.h"
+#include "clipper2next/rectclip/request.h"
+#include "clipper2next/triangulation/request.h"
 
 namespace next = clipper2next;
 namespace test = clipper2next::tests;
+
+TEST(DirectMaterialization, OwningPathsRetainLiveInnerStorage) {
+    const next::Paths64 input{{{0, 0}, {90, 0}, {100, 50}, {70, 100}, {0, 80}}};
+    auto check = [&](auto run) {
+        next::Paths64 output(1);
+        output.reserve(1000);
+        output[0].reserve(10000);
+        auto* outer = output.data();
+        auto* inner = output[0].data();
+        run(output);
+        ASSERT_FALSE(output.empty());
+        EXPECT_EQ(output.data(), outer);
+        EXPECT_EQ(output[0].data(), inner);
+        const auto expected = output;
+        std::vector<const next::Point64*> inner_addresses;
+        for (const auto& path : output) { inner_addresses.push_back(path.data()); }
+        run(output);
+        EXPECT_EQ(output, expected);
+        for (std::size_t i = 0; i < output.size(); ++i) {
+            EXPECT_EQ(output[i].data(), inner_addresses[i]);
+        }
+        EXPECT_EQ(output.data(), outer);
+        EXPECT_EQ(output[0].data(), inner);
+    };
+    check([&](auto& output) {
+        next::clip_request64 request;
+        request.clip_type = next::ClipType::Union;
+        request.subjects = input;
+        next::paths64_result result;
+        result.closed.swap(output);
+        next::clip_into(request, result);
+        output.swap(result.closed);
+    });
+    check([&](auto& output) {
+        next::offset_request64 request;
+        request.paths = input;
+        request.delta = 3;
+        next::paths64_result result;
+        result.closed.swap(output);
+        next::offset_into(request, result);
+        output.swap(result.closed);
+    });
+    check([&](auto& output) {
+        next::rect_clip_request64 request;
+        request.rect = {10, 10, 80, 80};
+        request.paths = input;
+        next::rect_clip_result64 result;
+        result.paths.swap(output);
+        next::rect_clip_into(request, result);
+        output.swap(result.paths);
+    });
+    check([&](auto& output) {
+        next::triangulation_request64 request;
+        request.paths = input;
+        next::triangulation_result64 result;
+        result.triangles.swap(output);
+        next::triangulate_into(request, result);
+        output.swap(result.triangles);
+    });
+}
+
+TEST(DirectMaterialization, TreeReusesEveryNestedPolygonAndChildrenBuffer) {
+    next::clip_request64 request;
+    request.clip_type = next::ClipType::Union;
+    request.fill_rule = next::FillRule::EvenOdd;
+    request.subjects = {{{0, 0}, {100, 0}, {95, 100}, {0, 100}},
+                        {{10, 10}, {80, 10}, {75, 80}, {10, 80}},
+                        {{20, 20}, {60, 20}, {55, 60}, {20, 60}}};
+    auto result = next::clip_tree(request);
+    const auto expected = result.tree;
+    std::vector<const next::Point64*> points;
+    std::vector<const next::PolyTree64::node_id*> children;
+    for (std::size_t i = 0; i < 4; ++i) {
+        points.push_back(result.tree.polygon({i}).data());
+        children.push_back(result.tree.children({i}).data());
+    }
+    next::clip_tree_into(request, result);
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(result.tree.polygon({i}), expected.polygon({i}));
+        EXPECT_EQ(result.tree.parent({i}), expected.parent({i}));
+        EXPECT_EQ(result.tree.depth({i}), expected.depth({i}));
+        EXPECT_EQ(result.tree.polygon({i}).data(), points[i]);
+        EXPECT_EQ(result.tree.children({i}).data(), children[i]);
+    }
+}
 
 TEST(Clipper2NextClipRequestApiTests, ClipReturnsClosedPaths) {
     next::clip_request64 request;
@@ -124,4 +212,33 @@ TEST(Clipper2NextClipRequestApiTests, ClipExecutionIsIndependentOfCallerRounding
         EXPECT_EQ(std::fegetround(), mode);
     }
     ASSERT_EQ(std::fesetround(original_mode), 0);
+}
+
+TEST(DirectMaterialization, PreparedFastPathsAndTreeKeepLiveBuffers) {
+    next::clip_request64 request;
+    request.clip_type = next::ClipType::Intersection;
+    request.subjects = {{{0, 0}, {100, 0}, {100, 100}, {0, 100}}};
+    request.clips = {{{25, 25}, {200, 25}, {200, 200}, {25, 200}}};
+    const auto prepared = next::prepare_clip_request(request);
+    auto result = next::clip(prepared);
+    result.closed.reserve(1000);
+    result.closed[0].reserve(10000);
+    const auto* outer = result.closed.data();
+    const auto* inner = result.closed[0].data();
+    const auto expected = result.closed;
+    next::clip_into(prepared, result);
+    EXPECT_EQ(result.closed, expected);
+    EXPECT_EQ(result.closed.data(), outer);
+    EXPECT_EQ(result.closed[0].data(), inner);
+    request.clip_type = next::ClipType::Union;
+    request.fill_rule = next::FillRule::NonZero;
+    request.clips.clear();
+    auto tree = next::clip_tree(request);
+    const auto node = tree.tree.child(tree.tree.root(), 0);
+    const auto* polygon = tree.tree.polygon(node).data();
+    const auto* children = tree.tree.children(tree.tree.root()).data();
+    next::clip_tree_into(request, tree);
+    EXPECT_EQ(tree.tree.polygon(node).data(), polygon);
+    EXPECT_EQ(tree.tree.children(tree.tree.root()).data(), children);
+    EXPECT_EQ(tree.tree.polygon(node), request.subjects.front());
 }

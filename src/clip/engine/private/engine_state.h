@@ -3,7 +3,7 @@
 #include "clipper2next/core.h"
 #include "clip/engine/private/engine_output_owner.h"
 #include "clip/engine/private/engine_scanline.h"
-#include "support/private/storage/stable_pool.h"
+#include "clip/engine/private/engine_active_storage.h"
 #include "clip/engine/private/engine_types.h"
 
 #include <span>
@@ -36,17 +36,17 @@ struct clipper_base_state {
 
     active_edge_node_ref actives_;
     active_edge_node_ref sel_;
-    stable_pool<active_edge_node> active_pool_;
+    engine_active_storage active_pool_;
     LocalMinimaList minima_list_;
     LocalMinimaList::iterator current_locmin_iter_;
     VertexStorageList vertex_lists_;
     scanline_queue scanline_list_;
     IntersectNodeList intersect_nodes_;
-    std::vector<active_edge_node*> scanbeam_top_edges_;
-    std::vector<active_edge_node*> scanbeam_unit_edges_;
-    std::vector<active_edge_node*> scanbeam_unit_scratch_;
+    engine_buffer<active_edge_node*> scanbeam_top_edges_;
+    engine_buffer<active_edge_node*> scanbeam_unit_edges_;
+    engine_buffer<active_edge_node*> scanbeam_unit_scratch_;
     HorzSegmentList horz_seg_list_;
-    std::vector<horizontal_join_node> horz_join_list_;
+    engine_buffer<horizontal_join_node> horz_join_list_;
     engine_output_owner output_owner_;
 };
 

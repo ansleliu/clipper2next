@@ -1,22 +1,16 @@
 #pragma once
 
 #include "clipper2next/core.h"
-#include "rectclip/private/rectclip_context.h"
 
 namespace clipper2next {
 namespace internal {
-class rectclip_execution_context;
-
 class rectclip_line_executor {
 public:
-    explicit rectclip_line_executor(rectclip_context& storage) noexcept;
-
-    [[nodiscard]] auto storage() noexcept -> rectclip_context&;
-    [[nodiscard]] auto storage() const noexcept -> const rectclip_context&;
-    auto execute_path(rectclip_execution_context& execution, const Path64& path) -> void;
+    explicit rectclip_line_executor(const Rect64& rect) noexcept;
+    auto execute_path(Paths64& output, const Path64& path) -> void;
 
 private:
-    rectclip_context* storage_;
+    const Rect64* rect_;
 };
 }  // namespace internal
 }  // namespace clipper2next

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "triangulation/private/triangulation_context.h"
+#include "triangulation/private/triangulation_sweep_front.h"
+#include "triangulation/private/triangulation_boundary_events.h"
 
 #include <algorithm>
 
@@ -48,21 +49,26 @@ namespace clipper2next::internal {
     return true;
 }
 
+[[nodiscard]] inline auto endpoint_event(const triangulation_edge& edge,
+                                         const triangulation_vertex* vertex) noexcept
+    -> std::size_t {
+    return edge.first == vertex ? edge.first_event : edge.second_event;
+}
+
 [[nodiscard]] inline auto find_linking_edge(const triangulation_vertex* first,
                                             const triangulation_vertex* second,
-                                            bool prefer_ascending) noexcept -> triangulation_edge* {
-    triangulation_edge* result = nullptr;
+                                            std::size_t first_event,
+                                            std::size_t second_event) noexcept
+    -> triangulation_edge* {
     for (auto edge_ref : first->edges) {
         auto* edge = edge_ref.get();
-        if (edge->vL == second || edge->vR == second) {
-            if (is_loose_edge(*edge) ||
-                ((edge->kind == triangulation_edge_kind::ascend) == prefer_ascending)) {
-                return edge;
-            }
-            result = edge;
+        if ((edge->first == second || edge->second == second) && !edge_completed(edge) &&
+            endpoint_event(*edge, first) == first_event &&
+            endpoint_event(*edge, second) == second_event) {
+            return edge;
         }
     }
-    return result;
+    return nullptr;
 }
 
 }  // namespace clipper2next::internal

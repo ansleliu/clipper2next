@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -11,6 +12,12 @@ namespace clipper2next::internal {
 
 class scanline_queue final {
 public:
+    scanline_queue() = default;
+    scanline_queue(const scanline_queue&) = delete;
+    auto operator=(const scanline_queue&) -> scanline_queue& = delete;
+
+    auto bind(execution_resource_ledger* context) -> void { values_.bind(context); }
+    auto detach() noexcept -> void { values_.detach(); }
     auto reserve(std::size_t capacity) -> void;
     auto clear() noexcept -> void;
     // Unlike clear(), also returns the heap storage to the allocator.
@@ -27,7 +34,10 @@ private:
     friend auto reset_scanlines(scanline_queue& scanlines,
                                 std::span<const int64_t> precomputed_heap) -> void;
 
-    std::vector<int64_t> values_;
+    engine_buffer<int64_t> values_;
+    // This inserted key is still pending until pop removes that scanline.
+    // It avoids repeated heap entries without a second key directory.
+    std::optional<int64_t> last_inserted_;
 };
 
 auto push_scanline(scanline_queue& scanlines, int64_t y) -> void;

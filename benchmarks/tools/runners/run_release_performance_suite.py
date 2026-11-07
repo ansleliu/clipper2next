@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import json
+import math
 import os
+import platform
 import re
+import random
+import statistics
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -13,12 +18,24 @@ if __package__ in {None, ""}:
 
 from benchmarks.tools.common.benchmark_command_args import benchmark_min_time_arg
 from benchmarks.tools.common.external_core_measurement import collect_pairwise_external_core
+from benchmarks.tools.common.external_core_measurement import load_median_records
+from benchmarks.tools.common.evidence_identity import (run_observed_command, sha256_file,
+    validate_process_observation, git_repository_identity)
+from benchmarks.tools.common.public_triangulation import supplement_rows, validate_fixtures, fixture_text
+from benchmarks.tools.common.matched_input_authority import (
+    checked_file, validate_original_inventory, public_build, capture_records,
+    kernel_records, worker_records, producing_observation,
+)
 from benchmarks.tools.common.release_gate_policy import (
     CALIBRATED_EXTERNAL_MAX_CV_PERCENT,
     CALIBRATED_EXTERNAL_MIN_TIME_SECONDS,
     CALIBRATED_EXTERNAL_MIN_WARMUP_TIME_SECONDS,
     CALIBRATED_EXTERNAL_REPETITIONS,
     EXTERNAL_CORE_SPEEDUP_MODE,
+)
+from tools.release.correction_authority import (
+    CORRECTION_CV_HOST_OVERRIDES,
+    correction_max_cv_percent,
 )
 
 
@@ -50,6 +67,207 @@ ORACLE_CORPUS_REQUIRED_PROFILES = (
     "clip-tree",
     "batch",
 )
+
+
+def validate_matched_inputs(manifest):
+    """Admit the frozen full matrix before launching any timed process."""
+    protocol_path = Path(manifest["protocol"]["path"])
+    if sha256_file(protocol_path) != manifest["protocol"]["sha256"]:
+        raise ValueError("frozen protocol changed")
+    protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
+    committed = subprocess.check_output(["git", "-C", str(repo_root()), "show",
+                                        "HEAD:benchmarks/public_triangulation/protocol.json"])
+    if manifest["protocol"]["sha256"] != "sha256:" + hashlib.sha256(committed).hexdigest():
+        raise ValueError("protocol differs from committed source authority")
+    if (protocol["product_metric"] != "cpu_time" or protocol["core_metric"] != "real_time" or
+            protocol["supplement_metric"] != "real_time" or protocol["statistic"] != "median" or
+            protocol["repetitions"] != 7 or protocol["min_time_seconds"] != 0.5 or
+            protocol["warmup_seconds"] != 1 or protocol["max_cv_percent"] != 5 or
+            protocol.get("cv_host_overrides") != CORRECTION_CV_HOST_OVERRIDES or
+            protocol["product_max_ratio"] != 1 or protocol["legacy_pair_min_speedup"] != 1.2 or
+            protocol["legacy_geomean_min_speedup"] != 1.2 or protocol["outer_pairs"] != 7 or
+            len(protocol["product_rows"]) != 8 or
+            sum(len(v) for v in protocol["product_rows"].values()) != 77):
+        raise ValueError("frozen mandatory matrix/statistic/policy changed")
+    if manifest.get("baseline_head") != "7667354f20374f02386e812deee299a697e8941e":
+        raise ValueError("original baseline source identity changed")
+    platform_placement = protocol["placements"]["Windows" if os.name == "nt" else "Linux"]
+    if manifest["placement"] != {key: platform_placement[key] for key in ("serial", "parallel", "observer")}:
+        raise ValueError("platform placement differs from frozen protocol")
+    for field in ("fixtures", "fixture_text", "mathematical_verdict", "combined_records", "capture_observation",
+                  "kernel_entry", "core_preflight", "worker_placement"):
+        entry = manifest[field]
+        if sha256_file(Path(entry["path"])) != entry["sha256"]:
+            raise ValueError(f"{field} proof/input changed")
+    fixtures = json.loads(Path(manifest["fixtures"]["path"]).read_text(encoding="utf-8-sig"))
+    cases = validate_fixtures(fixtures)
+    if Path(manifest["fixture_text"]["path"]).read_text(encoding="utf-8") != fixture_text(cases):
+        raise ValueError("timed fixture text differs from frozen coordinates")
+    if manifest["fixtures"]["sha256"] != protocol["fixture_sha256"]:
+        raise ValueError("platform fixture differs from common protocol")
+    verdict = json.loads(Path(manifest["mathematical_verdict"]["path"]).read_text())
+    if verdict.get("status") != "PASS" or verdict.get("cases") != 20 or len(verdict.get("results", [])) != 20:
+        raise ValueError("full public output mathematical verdict is missing")
+    if verdict.get("records_sha256") != manifest["combined_records"]["sha256"].removeprefix("sha256:"):
+        raise ValueError("mathematical verdict does not bind captured complete outputs")
+    repository = git_repository_identity(repo_root())
+    if (not repository or repository["dirty"] or repository["head_commit"] != manifest["candidate_head"] or
+            repository["canonical_source_identity"] != manifest["candidate_source_identity"]):
+        raise ValueError("candidate source changed or does not match frozen build source")
+    for side in ("old", "candidate"):
+        if set(manifest[side]["products"]) != set(protocol["product_rows"]):
+            raise ValueError("product executable inventory differs")
+        for entry in [manifest[side]["module"], manifest[side]["public"], *manifest[side]["products"].values()]:
+            if sha256_file(Path(entry["path"])) != entry["sha256"]:
+                raise ValueError("frozen executable/runtime changed")
+    original_archive = validate_original_inventory(manifest)
+    if sha256_file(Path(manifest["candidate"]["core"]["path"])) != manifest["candidate"]["core"]["sha256"]:
+        raise ValueError("frozen core executable changed")
+    builds = {side: public_build(repo_root(), side, manifest[side]) for side in ("old", "candidate")}
+    capture_records(manifest, cases, builds)
+    kernel_records(manifest, cases)
+    core = json.loads(Path(manifest["core_preflight"]["path"]).read_text())
+    if core.get("status") != "PASS" or core.get("cases") != 240 or len(core.get("results",[])) != 240:
+        raise ValueError("original240tri mathematical control is incomplete")
+    core_step = manifest["core_producer"]
+    expected_core_command = [manifest["candidate"]["core"]["path"], "--clipper2next_triangulation_records"]
+    producing_observation(core_step, "external-triangulation-records", "candidate", expected_core_command,
+                          manifest["candidate"]["core"], manifest["candidate"]["module"])
+    core_log = checked_file(core_step["output"])
+    identities = dict(line.split("=", 1) for line in core_log.read_text().splitlines() if line.startswith("correction_") and "=" in line)
+    if (core["process_observation"] != core_step["observation"] or
+            identities.get("correction_run_id") != core_step["run_id"] or
+            core.get("records_sha256") != core_step["output"]["sha256"].removeprefix("sha256:")):
+        raise ValueError("external mathematical records do not bind their actual producing run/output")
+    if core["original_profile"]["sha256"] != "sha256:3fe7a8983e8c46dc4a189521322e3e4ebc859a84120049aa1339f5c0d5e3d82e":
+        raise ValueError("original240request source identity changed")
+    for field in ("profile", "original_profile"):
+        if sha256_file(Path(core[field]["path"])) != core[field]["sha256"]:
+            raise ValueError("external triangulation inputs changed")
+    from tools.release.corpus_authority_manifest import validate_frozen_corpus_manifest
+    from tools.release.evidence_contract import load_contract
+    freeze = core["freeze"]
+    validate_frozen_corpus_manifest(Path(freeze["manifest"]), Path(freeze["source_root"]),
+                                   Path(freeze["derived_root"]), freeze["sha256"], load_contract())
+    if Path(manifest["candidate"]["environment"]["CLIPPER2NEXT_GEOMETRY_CORPUS_ROOT"]).resolve() != Path(freeze["derived_root"]).resolve():
+        raise ValueError("timed core root differs from mathematical input authority")
+    worker_records(manifest, builds)
+    return protocol, cases, original_archive
+
+
+def run_frozen_matched_suite(manifest_path, output_dir):
+    # This is a fixed project matrix, not a configurable experiment framework.
+    manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    protocol, cases, original_archive = validate_matched_inputs(manifest)
+    host_name = platform.node()
+    platform_name = platform.system()
+    max_cv = correction_max_cv_percent(platform_name, host_name)
+    if output_dir.exists():
+        raise ValueError("matched evidence directory must be fresh")
+    output_dir.mkdir(parents=True)
+    receipt = {"status": "RUNNING", "evidence_level": "E3 attempted; acceptance pending",
+               "manifest_sha256": sha256_file(Path(manifest_path)), "protocol_sha256": manifest["protocol"]["sha256"],
+               "platform": platform_name, "host_name": host_name, "max_cv_percent": max_cv,
+               "original_archive": original_archive,
+               "runs": [], "pairs": [], "failures": []}
+    rng = random.Random(protocol["outer_seed"])
+    matrix = [("product", exe, row, "cpu_time") for exe, rows in protocol["product_rows"].items() for row in rows]
+    matrix += [("supplement", "public", row, "real_time") for row in supplement_rows(cases)]
+    def save():
+        (output_dir / "matched-receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+    def run(side, family, exe_name, row, outer, metric):
+        binding = manifest[side]
+        executable = binding["public"] if family == "supplement" else binding["products"][exe_name]
+        stem = f"{outer:02d}-{len(receipt['runs']):04d}-{side}"
+        log, raw = output_dir / (stem + ".log"), output_dir / (stem + ".json")
+        command = [executable["path"]]
+        ready = go = None
+        if family == "supplement":
+            ready, go = output_dir / (stem + ".ready"), output_dir / (stem + ".go")
+            command += ["--fixtures", manifest["fixture_text"]["path"], "--mode", "timing", "--row", row,
+                        "--ready-file", str(ready), "--go-file", str(go)]
+        else:
+            command += [f"--benchmark_filter=^{re.escape(row)}$", "--benchmark_repetitions=7",
+                        "--benchmark_min_time=0.5s", "--benchmark_min_warmup_time=1",
+                        "--benchmark_report_aggregates_only=false", "--benchmark_enable_random_interleaving=true",
+                        f"--benchmark_out={raw}", "--benchmark_out_format=json"]
+        cpus = manifest["placement"]["parallel"] if exe_name in protocol["parallel_executables"] else manifest["placement"]["serial"]
+        observation = run_observed_command(command, log, run_id=stem,
+            executable=executable, module=binding["module"], benchmark_cpus=cpus,
+            observer_cpu=manifest["placement"]["observer"], ready_file=ready, go_file=go,
+            env=dict(os.environ, **binding.get("environment", {})))
+        receipt["runs"].append({"outer_pair": outer, "family": family, "row": row, "side": side,
+                                "log": log.name, "raw": raw.name, "process_observation": observation})
+        save()
+        if observation["exit_code"] != 0:
+            raise ValueError(f"{stem}: process failed, retained {log}")
+        if family == "supplement":
+            raw.write_text(log.read_text(encoding="utf-8"), encoding="utf-8")
+        payload = json.loads(raw.read_text(encoding="utf-8"))
+        return load_median_records(
+            payload, [row], time_field=metric,
+            iteration_counts="adaptive" if family == "supplement" else "fixed",
+        )[row]
+    try:
+        for outer in range(7):
+            order = list(matrix)
+            rng.shuffle(order)
+            for family, exe, row, metric in order:
+                sides = ["old", "candidate"]
+                rng.shuffle(sides)
+                measured = {side: run(side, family, exe, row, outer, metric) for side in sides}
+                old, candidate = measured["old"], measured["candidate"]
+                ratio = candidate["time"] / old["time"]
+                valid = (old["time_unit"] == candidate["time_unit"] and ratio <= 1 and
+                         old["cv"] <= max_cv and candidate["cv"] <= max_cv)
+                pair = {"outer_pair": outer, "family": family, "row": row, "order": sides,
+                        "metric": metric, "ratio": ratio, "old": old, "candidate": candidate,
+                        "status": "PASS" if valid else "FAIL"}
+                receipt["pairs"].append(pair)
+                if not valid: receipt["failures"].append(f"{outer}/{family}/{row}: threshold or CV")
+                save()
+        # Preserve the existing pairwise-process core owner and all32/14 identities.
+        from benchmarks.tools.common.release_gate_policy import EXTERNAL_CORE_BENCHMARK_NAMES, EXTERNAL_CORE_SPEEDUP_PAIRS
+        for outer in range(7):
+            binding = manifest["candidate"]
+            def core_command(command, log):
+                observation = run_observed_command(command, log, run_id=f"core-{outer}-{log.stem}",
+                    executable=binding["core"], module=binding["module"],
+                    benchmark_cpus=manifest["placement"]["serial"], observer_cpu=manifest["placement"]["observer"],
+                    env=dict(os.environ, **binding.get("environment", {})))
+                receipt["runs"].append({"family": "core", "outer_pair": outer, "process_observation": observation,
+                                        "log": str(log.relative_to(output_dir))})
+                save()
+                return observation["exit_code"]
+            raw = output_dir / f"core-{outer}.json"
+            status, reason, _ = collect_pairwise_external_core(benchmark_exe=Path(binding["core"]["path"]),
+                output_dir=output_dir, prefix=f"core-{outer}", repetitions=7, min_time=0.5,
+                min_warmup_time=1, benchmark_json=raw, benchmark_log=output_dir / f"core-{outer}.log",
+                benchmark_filter_arg=lambda value: f"--benchmark_filter={value}", run_command=core_command)
+            if status: raise ValueError(reason)
+            records = load_median_records(json.loads(raw.read_text()), EXTERNAL_CORE_BENCHMARK_NAMES, time_field="real_time")
+            ratios = [records[a]["time"] / records[b]["time"] for a, b in EXTERNAL_CORE_SPEEDUP_PAIRS]
+            geomean = math.exp(statistics.mean(math.log(r) for r in ratios))
+            if min(ratios) < 1.2 or geomean < 1.2 or any(r["cv"] > max_cv for r in records.values()):
+                receipt["failures"].append(f"core-{outer}: required legacy speedup/CV")
+            receipt.setdefault("core", []).append({"outer_pair": outer, "geomean": geomean,
+                                                   "ratios": ratios, "records": records})
+            save()
+        receipt["status"] = "FAIL" if receipt["failures"] else "PASS"
+        receipt["evidence_level"] = "E3 complete matched protocol"
+        # Median paired ratio is descriptive; all declared per-pair gates above remain binding.
+        receipt["uncertainty"] = {}
+        for family, _, row, _ in matrix:
+            ratios = [p["ratio"] for p in receipt["pairs"] if p["family"] == family and p["row"] == row]
+            samples = sorted(statistics.median(rng.choices(ratios, k=len(ratios))) for _ in range(10000))
+            receipt["uncertainty"][family + "/" + row] = {"median_paired_ratio": statistics.median(ratios),
+                "descriptive_bootstrap_95_percent": [samples[250], samples[9749]], "waiver": False}
+        validate_matched_inputs(manifest)
+    except (OSError, ValueError, KeyError) as error:
+        receipt["status"] = "FAIL"
+        receipt["failures"].append(str(error))
+    save()
+    return int(receipt["status"] != "PASS")
 
 
 @dataclass(frozen=True)
@@ -294,13 +512,11 @@ def compare_product_benchmark(
 def classify_product_compare_log(
     compare_log: Path,
     max_regression_percent: float,
-    noise_regression_percent: float,
 ) -> tuple[str, bool, list[str]]:
     if not compare_log.exists():
         return ("FAIL", True, ["missing compare log"])
 
     failures: list[str] = []
-    release_blocking = False
     for line in compare_log.read_text(encoding="utf-8", errors="replace").splitlines():
         match = COMPARE_ROW_RE.match(line)
         if not match:
@@ -309,14 +525,9 @@ def classify_product_compare_log(
         if regression <= max_regression_percent:
             continue
         failures.append(match.group("name"))
-        if regression > noise_regression_percent:
-            release_blocking = True
-
-    if not failures:
-        return ("PASS", False, [])
-    if release_blocking:
-        return ("FAIL", True, failures)
-    return ("NOISY", False, failures)
+    # Called after comparator rejection. Missing/error/CV failures are blocking
+    # even when the log contains no rejected ratio row.
+    return ("FAIL", True, failures)
 
 
 def external_core_speedup_gate_command(
@@ -526,13 +737,9 @@ def run_product_suite(args: argparse.Namespace, output_dir: Path, build_dir: Pat
             status, release_blocking, failures = classify_product_compare_log(
                 compare_log,
                 args.max_regression_percent,
-                args.noise_regression_percent,
             )
 
-        note = (
-            f"suite={suite_key}; threshold={args.max_regression_percent:.2f}%; "
-            f"noise_band={args.noise_regression_percent:.2f}%"
-        )
+        note = f"suite={suite_key}; threshold={args.max_regression_percent:.2f}%"
         if failures:
             note = f"{note}; noisy_or_failing_rows={', '.join(failures)}"
         suites.append(
@@ -982,9 +1189,10 @@ def run_oracle_suite(args: argparse.Namespace, output_dir: Path, build_dir: Path
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--build-dir", required=True)
+    parser.add_argument("--build-dir")
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--prefix", required=True)
+    parser.add_argument("--prefix")
+    parser.add_argument("--matched-manifest", type=Path)
     parser.add_argument("--baseline-prefix")
     parser.add_argument("--mode", choices=("product", "oracle"), default="product")
     parser.add_argument("--suite", choices=("all", *product_suites().keys()), default="all")
@@ -999,14 +1207,18 @@ def main() -> int:
         type=float,
         default=CALIBRATED_EXTERNAL_MIN_TIME_SECONDS,
     )
-    parser.add_argument("--max-regression-percent", type=float, default=15.0)
-    parser.add_argument("--noise-regression-percent", type=float, default=20.0)
+    parser.add_argument("--max-regression-percent", type=float, default=0.0)
     parser.add_argument(
         "--max-external-cv-percent",
         type=float,
         default=CALIBRATED_EXTERNAL_MAX_CV_PERCENT,
     )
     args = parser.parse_args()
+
+    if args.matched_manifest:
+        return run_frozen_matched_suite(args.matched_manifest, resolve_path(args.output_dir))
+    if not args.build_dir or not args.prefix:
+        parser.error("ordinary suite requires --build-dir and --prefix")
 
     if args.mode == "product":
         args.baseline_prefix = args.baseline_prefix or "product_baseline"

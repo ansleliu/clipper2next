@@ -112,7 +112,7 @@ TEST(Clipper2NextEngineScanbeamScheduleTests, SortedActiveListBuildsOneGlobalRun
     configure_edge(edges[3], 30, 30);
     link_ael(edges);
     next::internal::active_edge_node_ref sel;
-    std::vector<next::internal::active_edge_node*> top_edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> top_edges;
 
     const auto schedule = next::internal::prepare_global_scanbeam_schedule(
         edges.front(), 0, sel, top_edges);
@@ -138,7 +138,7 @@ TEST(Clipper2NextEngineScanbeamScheduleTests, InvertedActiveListBuildsMaximalRun
     configure_edge(edges[3], 30, 40);
     link_ael(edges);
     next::internal::active_edge_node_ref sel;
-    std::vector<next::internal::active_edge_node*> top_edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> top_edges;
 
     const auto schedule = next::internal::prepare_global_scanbeam_schedule(
         edges.front(),
@@ -167,7 +167,7 @@ TEST(Clipper2NextEngineScanbeamScheduleTests, InvertedActiveListDefaultsToUnitRu
     configure_edge(edges[3], 30, 40);
     link_ael(edges);
     next::internal::active_edge_node_ref sel;
-    std::vector<next::internal::active_edge_node*> top_edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> top_edges;
 
     const auto schedule = next::internal::prepare_global_scanbeam_schedule(
         edges.front(), 0, sel, top_edges);
@@ -201,13 +201,13 @@ TEST(Clipper2NextEngineScanbeamScheduleTests,
             next::internal::build_intersection_list_from_sel(
                 linked_sel, linked_intersections, 0, 10);
 
-        std::vector<next::internal::active_edge_node*> contiguous_order;
+        next::internal::engine_buffer<next::internal::active_edge_node*> contiguous_order;
         contiguous_order.reserve(contiguous_edges.size());
         for (auto& edge : contiguous_edges) {
             edge.current_x = next::internal::top_x(edge, 0);
             contiguous_order.push_back(&edge);
         }
-        std::vector<next::internal::active_edge_node*> scratch;
+        next::internal::engine_buffer<next::internal::active_edge_node*> scratch;
         next::internal::IntersectNodeList contiguous_intersections;
         const auto contiguous_has_intersections =
             next::internal::build_intersection_list_from_contiguous_unit_runs(
@@ -232,7 +232,7 @@ TEST(Clipper2NextEngineScanbeamScheduleTests, TopEdgesMirrorGlobalSelOrder) {
     configure_edge(edges[3], 30, 40, 10, 5);
     link_ael(edges);
     next::internal::active_edge_node_ref sel;
-    std::vector<next::internal::active_edge_node*> top_edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> top_edges;
 
     const auto schedule = next::internal::prepare_global_scanbeam_schedule(
         edges.front(), 0, sel, top_edges);
@@ -255,7 +255,7 @@ TEST(Clipper2NextEngineScanbeamScheduleTests,
     configure_edge(run_edges[3], 30, 10);
     link_ael(run_edges);
     next::internal::active_edge_node_ref run_sel;
-    std::vector<next::internal::active_edge_node*> top_edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> top_edges;
     const auto schedule = next::internal::prepare_global_scanbeam_schedule(
         run_edges.front(),
         0,
@@ -295,7 +295,7 @@ TEST(Clipper2NextEngineScanbeamScheduleTests,
     configure_edge(run_edges[5], 50, 0);
     link_ael(run_edges);
     next::internal::active_edge_node_ref run_sel;
-    std::vector<next::internal::active_edge_node*> top_edges;
+    next::internal::engine_buffer<next::internal::active_edge_node*> top_edges;
     const auto schedule = next::internal::prepare_global_scanbeam_schedule(
         run_edges.front(),
         0,

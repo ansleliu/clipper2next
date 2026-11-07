@@ -8,7 +8,7 @@ auto add_local_minimum(LocalMinimaList& minima, Vertex& vertex, PathType polytyp
     if ((VertexFlags::LocalMin & vertex.flags) != VertexFlags::Empty) { return; }
 
     vertex.flags = vertex.flags | VertexFlags::LocalMin;
-    minima.emplace_back(vertex, polytype, is_open);
+    minima.push_back(local_minimum_node{vertex, polytype, is_open});
 }
 
 auto initialize_vertex_path(Vertex* first_vertex,

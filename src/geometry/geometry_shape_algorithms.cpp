@@ -1,6 +1,5 @@
 #include "clipper2next/geometry/algorithms.h"
 
-#include <array>
 #include <cmath>
 #include <limits>
 #include <numbers>
@@ -10,7 +9,7 @@ namespace clipper2next {
 namespace {
 
 [[nodiscard]] inline auto round_away_from_zero_to_i64(double value) -> int64_t {
-    return value >= 0.0 ? static_cast<int64_t>(value + 0.5) : static_cast<int64_t>(value - 0.5);
+    return static_cast<int64_t>(std::round(value));
 }
 
 [[nodiscard]] auto ellipse_extent_is_representable(int64_t center, double radius) noexcept
@@ -34,27 +33,8 @@ namespace {
 }
 
 [[nodiscard]] auto ellipse_rotation_step(std::size_t steps) -> std::pair<double, double> {
-    if (steps == 32U) { return {0.19509032201612825, 0.98078528040323043}; }
     const auto angle = 2.0 * std::numbers::pi_v<double> / static_cast<double>(steps);
     return {std::sin(angle), std::cos(angle)};
-}
-
-[[nodiscard]] auto ellipse_unit_steps_32() -> const std::array<std::pair<double, double>, 32U>& {
-    static const auto values = [] {
-        auto result = std::array<std::pair<double, double>, 32U>{};
-        result[0] = {1.0, 0.0};
-        const auto [sine, cosine] = ellipse_rotation_step(32U);
-        auto dx = cosine;
-        auto dy = sine;
-        for (std::size_t index = 1; index < result.size(); ++index) {
-            result[index] = {dx, dy};
-            const auto x = dx * cosine - dy * sine;
-            dy = dy * cosine + dx * sine;
-            dx = x;
-        }
-        return result;
-    }();
-    return values;
 }
 
 }  // namespace
@@ -81,14 +61,6 @@ auto make_ellipse(const Point64& center, double radius_x, double radius_y, std::
     const auto center_y = static_cast<double>(center.y);
     Path64 result;
     result.reserve(steps);
-    if (steps == 32U) {
-        for (const auto& [dx, dy] : ellipse_unit_steps_32()) {
-            result.push_back(
-                make_point64_from_double(center_x + radius_x * dx, center_y + radius_y * dy));
-        }
-        return result;
-    }
-
     const auto [sine, cosine] = ellipse_rotation_step(steps);
     auto dx = cosine;
     auto dy = sine;

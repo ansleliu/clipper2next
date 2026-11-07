@@ -95,11 +95,30 @@ TEST(Clipper2NextRectClipGraphTests, TidyEdgesLeavesEmptyEdgeListsEmpty) {
     next::internal::rectclip_node_list counter_clockwise;
     next::internal::rectclip_node_list results;
 
-    next::internal::tidy_edges(0, clockwise, counter_clockwise, results);
+    EXPECT_FALSE(next::internal::tidy_edges(0, clockwise, counter_clockwise, results));
 
     EXPECT_TRUE(clockwise.empty());
     EXPECT_TRUE(counter_clockwise.empty());
     EXPECT_TRUE(results.empty());
+
+    using node = next::internal::rectclip_node;
+    node a0{{0, 0}}, a1{{4, 0}}, a2{{4, 10}}, a3{{0, 10}};
+    node b0{{0, 2}}, b1{{0, 8}}, b2{{3, 8}}, b3{{3, 2}};
+    const auto connect = [](const std::array<node*, 4>& nodes, std::size_t owner) {
+        for (std::size_t i = 0; i < nodes.size(); ++i) {
+            nodes[i]->next = nodes[(i + 1U) % nodes.size()];
+            nodes[i]->prev = nodes[(i + nodes.size() - 1U) % nodes.size()];
+            nodes[i]->owner_index = owner;
+        }
+    };
+    connect({&a0, &a1, &a2, &a3}, 0);
+    connect({&b0, &b1, &b2, &b3}, 1);
+    results = {&a0, &b0};
+    next::internal::add_to_edge(clockwise, &a0);
+    next::internal::add_to_edge(counter_clockwise, &b1);
+    EXPECT_TRUE(next::internal::tidy_edges(0, clockwise, counter_clockwise, results));
+    EXPECT_NE(results[0], nullptr);
+    EXPECT_EQ(results[1], nullptr);
 }
 
 TEST(Clipper2NextRectClipGraphTests, SetNewOwnerPropagatesThroughCircularPath) {
@@ -116,25 +135,7 @@ TEST(Clipper2NextRectClipGraphTests, SetNewOwnerPropagatesThroughCircularPath) {
     EXPECT_EQ(second.owner_index, 7U);
 }
 
-TEST(Clipper2NextRectClipGraphTests, BuildLinePathPreservesTwoNodeLinks) {
-    next::internal::rectclip_node first{{0, 0}};
-    next::internal::rectclip_node second{{10, 0}};
-    first.next = &second;
-    first.prev = &second;
-    second.next = &first;
-    second.prev = &first;
-    auto* start = &first;
-
-    const auto path = next::internal::build_line_path(start);
-
-    ASSERT_EQ(path.size(), 2U);
-    EXPECT_EQ(first.next.get(), &second);
-    EXPECT_EQ(first.prev.get(), &second);
-    EXPECT_EQ(second.next.get(), &first);
-    EXPECT_EQ(second.prev.get(), &first);
-}
-
-TEST(Clipper2NextRectClipGraphTests, BuildPolygonPathExtractsCircularPath) {
+TEST(Clipper2NextRectClipGraphTests, PreparePolygonPathPreservesNonCollinearRing) {
     next::internal::rectclip_node first{{0, 0}};
     next::internal::rectclip_node second{{10, 0}};
     next::internal::rectclip_node third{{0, 10}};
@@ -146,12 +147,30 @@ TEST(Clipper2NextRectClipGraphTests, BuildPolygonPathExtractsCircularPath) {
     third.prev = &second;
     auto* start = &first;
 
-    const auto path = next::internal::build_polygon_path(start);
+    next::internal::rectclip_node_list results{&first};
+    std::array<next::internal::rectclip_node_list, 8> edges;
+    EXPECT_FALSE(next::internal::check_edges(results, edges.data(), {-1, -1, 11, 11}));
 
-    ASSERT_EQ(path.size(), 3U);
-    EXPECT_EQ(path[0], next::Point64(0, 0));
-    EXPECT_EQ(path[1], next::Point64(10, 0));
-    EXPECT_EQ(path[2], next::Point64(0, 10));
+    next::internal::prepare_polygon_path(start);
+
+    EXPECT_EQ(start, &first);
+    EXPECT_EQ(first.next.get(), &second);
+    EXPECT_EQ(second.next.get(), &third);
+    EXPECT_EQ(third.next.get(), &first);
+    EXPECT_EQ(first.prev.get(), &third);
+    EXPECT_EQ(second.prev.get(), &first);
+    EXPECT_EQ(third.prev.get(), &second);
+    EXPECT_EQ(first.pt, next::Point64(0, 0));
+    EXPECT_EQ(second.pt, next::Point64(10, 0));
+    EXPECT_EQ(third.pt, next::Point64(0, 10));
+
+    next::internal::rectclip_node middle{{5, 0}};
+    middle.prev = &first;
+    middle.next = &second;
+    first.next = &middle;
+    second.prev = &middle;
+    EXPECT_TRUE(next::internal::check_edges(results, edges.data(), {-1, -1, 11, 11}));
+    EXPECT_EQ(first.next.get(), &second);
 }
 
 TEST(Clipper2NextRectClipGraphTests, ExecutionContextAppendsCircularNodes) {
@@ -159,9 +178,20 @@ TEST(Clipper2NextRectClipGraphTests, ExecutionContextAppendsCircularNodes) {
     next::internal::rectclip_execution_context context{storage};
 
     auto& first = context.add({1, 1}, false);
+    EXPECT_EQ(first.next.get(), &first);
+    EXPECT_EQ(first.prev.get(), &first);
+    EXPECT_EQ(first.owner_index, 0U);
+    EXPECT_EQ(first.edge, nullptr);
     auto& second = context.add({2, 2}, false);
 
     EXPECT_EQ(first.next.get(), &second);
     EXPECT_EQ(second.prev.get(), &first);
     EXPECT_EQ(storage.results.size(), 1U);
+    EXPECT_EQ(second.owner_index, 0U);
+    EXPECT_EQ(second.edge, nullptr);
+    auto& another = context.add({3, 3}, true);
+    EXPECT_EQ(another.next.get(), &another);
+    EXPECT_EQ(another.prev.get(), &another);
+    EXPECT_EQ(another.owner_index, 0U);
+    EXPECT_EQ(storage.results.size(), 2U);
 }

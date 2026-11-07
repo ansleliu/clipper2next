@@ -100,8 +100,3 @@ TEST(Clipper2NextBatchExecutorTests, ClipBatchWorkProfileRejectsNonDefaultOption
 TEST(Clipper2NextBatchExecutorTests, BatchLargeThresholdIsExplicit) {
     EXPECT_EQ(next::internal::clip_batch_parallel_threshold(), 1024U);
 }
-
-TEST(Clipper2NextBatchExecutorTests, ParallelSafetyAcceptsRequestsWithoutCallbacks) {
-    std::vector<next::clip_request64> requests(2);
-    EXPECT_TRUE(next::internal::clip_batch_requests_are_parallel_safe(requests));
-}

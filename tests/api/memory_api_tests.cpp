@@ -4,12 +4,14 @@
 #include "clipper2next/rectclip.h"
 #include "clipper2next/triangulation.h"
 #include "offset/private/offset_state.h"
+#include "offset/private/offset_thread_state.h"
 #include "rectclip/private/rectclip_context.h"
 #include "rectclip/private/rectclip_thread_state.h"
 
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <optional>
 #include <type_traits>
 
 namespace next = clipper2next;
@@ -49,7 +51,8 @@ TEST(Clipper2NextMemoryApiTests, ReleaseThreadCachesCanBeCalledAfterPublicGeomet
 }
 
 TEST(Clipper2NextMemoryApiTests, ReleaseThreadCachesReturnsRectClipRetainedStorage) {
-    auto& context = next::internal::acquire_reusable_rectclip_context({0, 0, 10, 10});
+    auto operation = std::optional<next::internal::rectclip_operation_lease>{std::in_place};
+    auto& context = operation->context({0, 0, 10, 10});
     for (std::size_t index = 0; index < 1025U; ++index) {
         static_cast<void>(context.op_container.emplace());
     }
@@ -63,6 +66,9 @@ TEST(Clipper2NextMemoryApiTests, ReleaseThreadCachesReturnsRectClipRetainedStora
     ASSERT_GT(context.start_locs.capacity(), 0U);
 
     next::release_thread_caches();
+    EXPECT_GT(context.op_container.retained_capacity(), 0U);
+    EXPECT_GT(context.results.capacity(), 0U);
+    operation.reset();
 
     EXPECT_EQ(context.op_container.retained_capacity(), 0U);
     EXPECT_EQ(context.results.capacity(), 0U);
@@ -82,4 +88,20 @@ TEST(Clipper2NextMemoryApiTests, OffsetStateReleaseReturnsRetainedStorage) {
 
     EXPECT_EQ(state.normals.capacity(), 0U);
     EXPECT_EQ(state.path_out.capacity(), 0U);
+}
+
+TEST(Clipper2NextMemoryApiTests, ActiveOffsetStateSurvivesNestedOperationAndRelease) {
+    auto lease = next::internal::offset_state_lease{};
+    auto& state = lease.state();
+    state.group_delta = 7;
+    state.normals.push_back({3, 4});
+    next::offset_request64 nested;
+    nested.paths = {{{0, 0}, {100, 0}, {100, 100}, {0, 100}}};
+    nested.delta = 50;
+    ASSERT_TRUE(next::offset_checked(nested));
+    EXPECT_EQ(state.group_delta, 7);
+    ASSERT_EQ(state.normals.size(), 1U);
+    next::release_thread_caches();
+    EXPECT_EQ(state.group_delta, 7);
+    EXPECT_EQ(state.normals.size(), 1U);
 }

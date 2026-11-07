@@ -1,4 +1,5 @@
 #include "clipper2next/batch.h"
+#include "api/private/checked_execution.h"
 #include "clipper2next/clip.h"
 #include "batch/private/batch_clip_executor.h"
 #include "clip/private/clip_execution_strategy.h"
@@ -7,10 +8,8 @@
 #include "support/private/bulk_execution.h"
 #include <algorithm>
 #include <cstddef>
-#include <new>
 #include <optional>
 #include <span>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 namespace {
@@ -18,7 +17,7 @@ namespace {
 [[nodiscard]] auto clip_batch_item(
     const clipper2next::clip_request64& request)
     -> clipper2next::paths64_result {
-    return clipper2next::internal::execute_clip_with_fast_path(request);
+    return clipper2next::internal::execute_clip_with_fast_path_validated(request);
 }
 [[nodiscard]] auto clip_batch_item(
     const clipper2next::prepared_clip_request64& request)
@@ -29,7 +28,7 @@ namespace {
     const clipper2next::clip_request64& request,
     const clipper2next::clip_request_metadata64& metadata)
     -> clipper2next::paths64_result {
-    return clipper2next::internal::execute_clip_with_fast_path(
+    return clipper2next::internal::execute_clip_with_fast_path_validated(
         request, metadata);
 }
 template <typename Request>
@@ -49,12 +48,7 @@ template <typename Request>
     auto metadata = std::vector<clipper2next::clip_request_metadata64>{};
     metadata.reserve(requests.size());
     for (const auto& request : requests) {
-        if (!clipper2next::internal::clip_request_in_range(request)) {
-            metadata.emplace_back();
-        } else {
-            metadata.push_back(
-                clipper2next::internal::build_clip_request_metadata(request));
-        }
+        metadata.push_back(clipper2next::internal::build_clip_request_metadata(request));
     }
     return metadata;
 }
@@ -155,29 +149,6 @@ template <typename Operation>
     return results;
 }
 
-template <typename Operation>
-[[nodiscard]] auto checked_call(Operation operation)
-    -> clipper2next::expected_batch_results64 {
-    try {
-        return operation();
-    } catch (const std::bad_alloc&) {
-        return clipper2next::make_clipper_error<
-            std::vector<clipper2next::paths64_result>>(
-            clipper2next::clipper_error_code::allocation_failure);
-    } catch (const std::length_error&) {
-        return clipper2next::make_clipper_error<
-            std::vector<clipper2next::paths64_result>>(
-            clipper2next::clipper_error_code::resource_limit);
-    } catch (const clipper2next::clipper_error& error) {
-        return clipper2next::make_clipper_error<
-            std::vector<clipper2next::paths64_result>>(error.code());
-    } catch (...) {
-        return clipper2next::make_clipper_error<
-            std::vector<clipper2next::paths64_result>>(
-            clipper2next::clipper_error_code::internal_error);
-    }
-}
-
 } // namespace
 
 namespace clipper2next {
@@ -186,10 +157,15 @@ auto clip_batch_checked(
     const std::span<const clip_request64> requests,
     const sync_bulk_executor_ref executor)
     -> expected_batch_results64 {
-    return checked_call([&]() -> expected_batch_results64 {
+    return internal::checked_call<std::vector<paths64_result>>([&]() -> expected_batch_results64 {
+        for (const auto& request : requests) {
+            if (const auto error = internal::validate_clip_request(request);
+                error != clipper_error_code::ok) {
+                return make_clipper_error<std::vector<paths64_result>>(error);
+            }
+        }
         if (!executor.has_parallel_capability() ||
-            requests.size() < internal::clip_batch_parallel_threshold() ||
-            !internal::clip_batch_requests_are_parallel_safe(requests)) {
+            requests.size() < internal::clip_batch_parallel_threshold()) {
             return clip_batch_sequential(requests);
         }
         if (internal::clip_batch_requests_have_uniform_shape(requests)) {
@@ -222,10 +198,9 @@ auto clip_batch_checked(
     const std::span<const prepared_clip_request64> requests,
     const sync_bulk_executor_ref executor)
     -> expected_batch_results64 {
-    return checked_call([&]() -> expected_batch_results64 {
+    return internal::checked_call<std::vector<paths64_result>>([&]() -> expected_batch_results64 {
         if (!executor.has_parallel_capability() ||
-            requests.size() < internal::clip_batch_parallel_threshold() ||
-            !internal::clip_batch_requests_are_parallel_safe(requests)) {
+            requests.size() < internal::clip_batch_parallel_threshold()) {
             return clip_batch_sequential(requests);
         }
         const auto profiles = build_profiles(requests);

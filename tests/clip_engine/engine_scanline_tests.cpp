@@ -22,6 +22,7 @@ TEST(Clipper2NextEngineScanlineTests, LocalMinimaSortBottomUpThenLeftToRight) {
 }
 
 TEST(Clipper2NextEngineScanlineTests, ScanlineQueuePopsHighestAndSkipsDuplicates) {
+    next::internal::execution_resource_ledger resources;
     next::internal::scanline_queue scanlines;
     next::internal::push_scanline(scanlines, 10);
     next::internal::push_scanline(scanlines, 30);
@@ -38,6 +39,35 @@ TEST(Clipper2NextEngineScanlineTests, ScanlineQueuePopsHighestAndSkipsDuplicates
     ASSERT_TRUE(next::internal::pop_scanline(scanlines, y));
     EXPECT_EQ(y, 10);
 
+    EXPECT_FALSE(next::internal::pop_scanline(scanlines, y));
+
+    resources.maximum_workspace_bytes = sizeof(int64_t);
+    scanlines.bind(&resources);
+    next::internal::push_scanline(scanlines, 30);
+    EXPECT_NO_THROW(next::internal::push_scanline(scanlines, 30));
+    EXPECT_EQ(scanlines.size(), 1U);
+    EXPECT_EQ(resources.engine_bytes, sizeof(int64_t));
+    EXPECT_EQ(resources.engine_high_water, sizeof(int64_t));
+    EXPECT_THROW(next::internal::push_scanline(scanlines, 20), next::clipper_error);
+    EXPECT_NO_THROW(next::internal::push_scanline(scanlines, 30));
+    ASSERT_TRUE(next::internal::pop_scanline(scanlines, y));
+    EXPECT_EQ(y, 30);
+    EXPECT_EQ(resources.engine_bytes, 0U);
+
+    next::internal::push_scanline(scanlines, 30);
+    scanlines.clear();
+    next::internal::push_scanline(scanlines, 30);
+    scanlines.release();
+    next::internal::push_scanline(scanlines, 30);
+    scanlines.clear();
+    resources.maximum_workspace_bytes = 2U * sizeof(int64_t);
+    const int64_t precomputed[]{10};
+    next::internal::reset_scanlines(scanlines, precomputed);
+    next::internal::push_scanline(scanlines, 30);
+    ASSERT_TRUE(next::internal::pop_scanline(scanlines, y));
+    EXPECT_EQ(y, 30);
+    ASSERT_TRUE(next::internal::pop_scanline(scanlines, y));
+    EXPECT_EQ(y, 10);
     EXPECT_FALSE(next::internal::pop_scanline(scanlines, y));
 }
 

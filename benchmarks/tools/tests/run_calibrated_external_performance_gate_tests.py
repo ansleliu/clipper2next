@@ -15,6 +15,7 @@ TOOLS_DIR = REPO_ROOT / "benchmarks" / "tools"
 SCRIPT = TOOLS_DIR / "runners" / "run_calibrated_external_performance_gate.py"
 
 from benchmarks.tools.common import release_gate_policy as policy
+from benchmarks.tools.tests.measurement_fixtures import complete_measurements
 
 CORPUS_PROFILES = (
     "overlay",
@@ -78,6 +79,7 @@ def make_fake_benchmark(
             },
         ])
 
+    records = complete_measurements(records)
     fake = directory / "fake_benchmark.py"
     fake.write_text(
         textwrap.dedent(
@@ -168,11 +170,7 @@ class CalibratedExternalPerformanceGateTests(unittest.TestCase):
                 "--prefix",
                 "unit",
                 "--repetitions",
-                str(
-                    1
-                    if directional
-                    else policy.CALIBRATED_EXTERNAL_REPETITIONS
-                ),
+                str(policy.CALIBRATED_EXTERNAL_REPETITIONS),
                 "--min-time",
                 str(
                     0.01

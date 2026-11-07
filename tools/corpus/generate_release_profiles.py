@@ -30,10 +30,11 @@ from tools.release.evidence_contract import (
     ReleaseEvidenceContract,
     load_contract,
 )
+from tools.release.correction_authority import authority_digest, canonical_options, default_authority
 
 
 GENERATOR_NAME = "generate_release_profiles"
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 SELECTOR_METHOD = "sha256-stratified-v1"
 LEGACY_ENGINE_VERSION = "2.0.1"
 HOLDOUT_MODULUS = 5
@@ -44,14 +45,6 @@ _NUMBER = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _POINT_RE = re.compile(rf"({_NUMBER})\s+({_NUMBER})")
 _INNER_PATH_RE = re.compile(r"\(([^()]*)\)")
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
-_OPTION_KEYS = {
-    "fill_rule",
-    "join_type",
-    "end_type",
-    "is_closed",
-    "preserve_collinear",
-    "reverse_solution",
-}
 _OVERLAY_OPERATIONS = ("intersection", "union", "difference", "xor")
 _FILL_RULES = ("even_odd", "non_zero", "positive", "negative")
 _JOIN_TYPES = ("miter", "round", "square")
@@ -1346,9 +1339,8 @@ def _build_profile_cases(
 
 def _render_record(case: CaseSpec, case_set: str, index: int) -> dict[str, object]:
     input_digest = canonical_json_digest(case.inputs)
-    options = {
-        key: case.inputs[key] for key in sorted(_OPTION_KEYS & set(case.inputs))
-    }
+    options = canonical_options(case.inputs)
+    domain, contract_id, expected = default_authority(case.operation)
     identifier_digest = _stable_digest(
         case.profile_id,
         case.scenario,
@@ -1382,9 +1374,11 @@ def _render_record(case: CaseSpec, case_set: str, index: int) -> dict[str, objec
         },
         "canonical_input_digest": input_digest,
         "canonical_options_digest": canonical_json_digest(options),
+        "comparison_domain": domain,
+        "contract_id": contract_id,
+        "expected": expected,
     }
     if case_set == "verification":
-        record["expected"] = {"relation": "strict-legacy-runtime"}
         record["reference_engines"] = [
             {
                 "engine": "clipper2-legacy",
@@ -1396,6 +1390,7 @@ def _render_record(case: CaseSpec, case_set: str, index: int) -> dict[str, objec
         record["parameters"] = copy.deepcopy(case.parameters)
     else:
         raise ProfileGenerationError(f"unsupported case set {case_set!r}")
+    record["authority_digest"] = authority_digest(record)
     return record
 
 
@@ -1514,6 +1509,77 @@ def generate_release_profiles(
     )
 
 
+def derive_authority_profiles(input_root: Path, output_root: Path) -> GenerationResult:
+    """Annotate a read-only corpus for this authority schema without reshaping it.
+
+    Existing Offset records have no independent absolute expected and therefore
+    remain strict legacy. Formal analytic correction cases are added by T03.
+    Full files are copied byte-for-byte and are eligibility data, not executed
+    verification samples. Every input file and every derived case is mapped.
+    """
+    input_root, output_root = Path(input_root).resolve(), Path(output_root).resolve()
+    if input_root == output_root or input_root in output_root.parents or output_root in input_root.parents:
+        raise ProfileGenerationError("source and derived corpus roots must be disjoint")
+    source_files: list[dict[str, object]] = []
+    case_mappings: list[dict[str, object]] = []
+    payloads: dict[Path, bytes] = {}
+    counts: dict[str, int] = {}
+    paths = sorted((input_root / "normalized").rglob("*.jsonl"))
+    if not paths:
+        raise ProfileGenerationError("source corpus contains no JSONL files")
+    for path in paths:
+        relative = path.relative_to(input_root)
+        case_set = relative.parts[1]
+        records, errors = profile_check.load_profile(path, case_set)
+        if errors:
+            raise ProfileGenerationError("\n".join(errors))
+        source_hash = profile_check.file_sha256(path)
+        source_files.append({"path": relative.as_posix(), "sha256": source_hash, "record_count": len(records),
+                             "purpose": "eligibility-only" if case_set == "full" else case_set})
+        if case_set == "full":
+            payloads[relative] = path.read_bytes()
+            continue
+        if case_set not in {"verification", "benchmark"}:
+            raise ProfileGenerationError(f"unknown source case set {case_set}")
+        for line, record in enumerate(records, 1):
+            inputs = record.get("inputs")
+            if not isinstance(inputs, dict):
+                raise ProfileGenerationError(f"{path}:{line}: missing inputs")
+            domain, contract_id, expected = default_authority(record["operation"])
+            record.update(comparison_domain=domain, contract_id=contract_id, expected=expected,
+                          canonical_input_digest=canonical_json_digest(inputs),
+                          canonical_options_digest=canonical_json_digest(canonical_options(inputs)),
+                          generator={"name": GENERATOR_NAME, "version": GENERATOR_VERSION})
+            record["authority_source"] = {"path": relative.as_posix(), "sha256": source_hash, "record": line}
+            record["authority_digest"] = authority_digest(record)
+            case_mappings.append({"id": record["id"], "case_set": case_set, "profile_id": path.stem, "operation": record["operation"],
+                                  "source": record["authority_source"],
+                                  **{key: record[key] for key in ("comparison_domain", "contract_id", "canonical_input_digest", "canonical_options_digest", "authority_digest")}})
+        counts[f"{path.stem}:{case_set}"] = len(records)
+        payloads[relative] = _encode_jsonl(records)
+    manifest = {"schema_version": 2, "generator": {"name": GENERATOR_NAME, "version": GENERATOR_VERSION},
+                "source_root": str(input_root), "selection_phase": "before-execution",
+                "source_files": source_files, "case_mappings": case_mappings,
+                "derived_files": [{"path": path.as_posix(), "sha256": hashlib.sha256(data).hexdigest()}
+                                  for path, data in sorted(payloads.items())]}
+    payloads[Path("authority-manifest.json")] = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    _write_atomically(output_root, payloads)
+    return GenerationResult(profile_counts=dict(sorted(counts.items())), output_root=output_root)
+
+
+def derive_offset_contract_source(source_path: Path, output_root: Path) -> GenerationResult:
+    """Derive the independent formal source alongside, never in place of, external profiles."""
+    from tools.release.corpus_authority_manifest import offset_contract_source_manifest
+    source_path, output_root = source_path.resolve(), output_root.resolve()
+    cases_path = output_root / "offset-contract-cases.jsonl"
+    manifest = offset_contract_source_manifest(source_path, cases_path)
+    output_root.mkdir(parents=True, exist_ok=True)
+    cases_path.write_bytes(source_path.read_bytes())
+    (output_root / "offset-contract-manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return GenerationResult({"offset-analytic": manifest["source"]["record_count"]}, output_root)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
@@ -1524,11 +1590,15 @@ def main() -> int:
     parser.add_argument("input_root", type=Path)
     parser.add_argument("output_root", type=Path)
     parser.add_argument("--contract", type=Path, default=DEFAULT_CONTRACT_PATH)
+    parser.add_argument("--derive-authority", action="store_true", help="derive metadata only; preserve original inputs and tolerance")
+    parser.add_argument("--derive-offset-contracts", action="store_true", help="derive an independent repository Offset analytic source manifest; input_root is its JSONL file")
     args = parser.parse_args()
+    if args.derive_authority and args.derive_offset_contracts:
+        parser.error("select exactly one source derivation mode")
 
     try:
         contract = load_contract(args.contract)
-        result = generate_release_profiles(
+        result = derive_offset_contract_source(args.input_root, args.output_root) if args.derive_offset_contracts else derive_authority_profiles(args.input_root, args.output_root) if args.derive_authority else generate_release_profiles(
             args.input_root,
             args.output_root,
             contract,

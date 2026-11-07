@@ -31,6 +31,8 @@ auto dispose_active_edges(active_edge_node*& head) noexcept -> void;
 auto dispose_active_edges(active_edge_node_ref& head) noexcept -> void;
 auto dispose_vertices_and_local_minima(reuseable_data_state& state) noexcept -> void;
 auto dispose_vertices_and_local_minima(clipper_base_state& state) noexcept -> void;
+auto retire_active_edge(clipper_base_state& state, active_edge_node& edge) noexcept -> void;
+
 auto cleanup_engine_state(clipper_base_state& state) noexcept -> void;
 auto reset_engine_state_for_reuse(clipper_base_state& state) noexcept -> void;
 auto release_engine_state_storage(clipper_base_state& state) noexcept -> void;

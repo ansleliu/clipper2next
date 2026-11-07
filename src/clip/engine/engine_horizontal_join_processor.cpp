@@ -15,7 +15,7 @@ auto fix_output_record_points(output_record_node* output_record) -> void {
 
 }  // namespace
 
-auto process_horizontal_joins(std::vector<horizontal_join_node>& horizontal_joins,
+auto process_horizontal_joins(engine_buffer<horizontal_join_node>& horizontal_joins,
                               engine_output_owner& output_owner,
                               bool using_polytree) -> void {
     for (auto& join : horizontal_joins) {

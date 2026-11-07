@@ -169,13 +169,13 @@ TEST(Clipper2NextScalarHelperTests, ClosestPointUsesTheFullIntegralCoordinateDel
     EXPECT_EQ(next::closest_point_on_segment(segment_end, segment_start, segment_end), segment_end);
 }
 
-TEST(Clipper2NextScalarHelperTests, PathTransformPreservesLegacyTruncation) {
+TEST(Clipper2NextScalarHelperTests, PathTransformPreservesLegacyNearestAwayRounding) {
     const next::PathD source{{1.75, -1.75}};
 
     const auto transformed = next::transform_path<int64_t>(source);
 
     ASSERT_EQ(transformed.size(), 1U);
-    EXPECT_EQ(transformed.front(), (next::Point64{1, -1}));
+    EXPECT_EQ(transformed.front(), (next::Point64{2, -2}));
 }
 
 TEST(Clipper2NextScalarHelperTests, TranslatePathsMatchesPublicScalarHelper) {

@@ -1,72 +1,68 @@
 #include "clip/engine/private/engine_topology.h"
 
-#include "clipper2next/geometry/algorithms.h"
 #include "geometry/private/geometry_predicates.h"
 
 namespace clipper2next::internal {
 
-auto point_in_output_polygon(const Point64& point, output_point_node* output_point)
-    -> PointInPolygonResult {
+auto points_in_output_polygon(const std::array<Point64, 2>& points,
+                               output_point_node* output_point)
+    -> std::array<PointInPolygonResult, 2> {
+    using result = PointInPolygonResult;
     if (output_point == output_point->next || output_point->prev == output_point->next) {
-        return PointInPolygonResult::IsOutside;
+        return {result::IsOutside, result::IsOutside};
     }
-
-    auto* start = output_point;
+    std::array<bool, 2> inside{}, on{};
+    auto previous_y = output_point->prev->pt.y;
+    std::array<bool, 2> off_level{previous_y != points[0].y, previous_y != points[1].y};
+    const auto low = (std::min)(points[0].y, points[1].y);
+    const auto high = (std::max)(points[0].y, points[1].y);
+    auto* current_node = output_point;
     do {
-        if (output_point->pt.y != point.y) { break; }
-        output_point = output_point->next.get();
-    } while (output_point != start);
-    if (output_point->pt.y == point.y) { return PointInPolygonResult::IsOutside; }
-
-    bool is_above = output_point->pt.y < point.y;
-    const bool starting_above = is_above;
-    auto value = 0;
-    auto* current = output_point->next.get();
-    while (current != output_point) {
-        if (is_above) {
-            while (current != output_point && current->pt.y < point.y) {
-                current = current->next.get();
+        // An edge wholly below or above both query levels cannot cross
+        // either ray or contain either point. Share the original skip walk.
+        if (current_node != output_point && previous_y < low) {
+            while (current_node != output_point && current_node->pt.y < low) {
+                current_node = current_node->next.get();
             }
-        } else {
-            while (current != output_point && current->pt.y > point.y) {
-                current = current->next.get();
+            if (current_node == output_point) { break; }
+        } else if (current_node != output_point && previous_y > high) {
+            while (current_node != output_point && current_node->pt.y > high) {
+                current_node = current_node->next.get();
+            }
+            if (current_node == output_point) { break; }
+        }
+        const auto& previous = current_node->prev->pt;
+        const auto& current = current_node->pt;
+        for (std::size_t i = 0; i != points.size(); ++i) {
+            const auto& point = points[i];
+            off_level[i] = off_level[i] || current.y != point.y;
+            if (on[i]) { continue; }
+            if (current.y == point.y &&
+                (current.x == point.x ||
+                 (previous.y == point.y &&
+                  (point.x < previous.x) != (point.x < current.x)))) {
+                on[i] = true;
+                continue;
+            }
+            if ((previous.y > point.y) == (current.y > point.y)) { continue; }
+            if (point.x < previous.x && point.x < current.x) {
+                inside[i] = !inside[i];
+            } else if (!(point.x > previous.x && point.x > current.x)) {
+                const auto sign = cross_product_sign_in_clipper_range(previous, current, point);
+                if (!sign) { on[i] = true; }
+                else if ((sign > 0) == (current.y > previous.y)) { inside[i] = !inside[i]; }
             }
         }
-        if (current == output_point) { break; }
-
-        if (current->pt.y == point.y) {
-            if (current->pt.x == point.x ||
-                (current->pt.y == current->prev->pt.y &&
-                 (point.x < current->prev->pt.x) != (point.x < current->pt.x))) {
-                return PointInPolygonResult::IsOn;
-            }
-
-            current = current->next.get();
-            if (current == output_point) { break; }
-            continue;
-        }
-
-        if (point.x < current->pt.x && point.x < current->prev->pt.x) {
-        } else if (point.x > current->prev->pt.x && point.x > current->pt.x) {
-            value = 1 - value;
-        } else {
-            const auto sign = cross_product_sign_in_clipper_range(
-                current->prev->pt, current->pt, point);
-            if (sign == 0) { return PointInPolygonResult::IsOn; }
-            if ((sign < 0) == is_above) { value = 1 - value; }
-        }
-        is_above = !is_above;
-        current = current->next.get();
+        previous_y = current.y;
+        current_node = current_node->next.get();
+    } while (current_node != output_point);
+    std::array<result, 2> results;
+    for (std::size_t i = 0; i != results.size(); ++i) {
+        // Preserve the established all-horizontal degenerate-ring result.
+        results[i] = !off_level[i] ? result::IsOutside :
+                     on[i] ? result::IsOn : inside[i] ? result::IsInside : result::IsOutside;
     }
-
-    if (is_above != starting_above) {
-        const auto sign = cross_product_sign_in_clipper_range(
-            current->prev->pt, current->pt, point);
-        if (sign == 0) { return PointInPolygonResult::IsOn; }
-        if ((sign < 0) == is_above) { value = 1 - value; }
-    }
-
-    return value == 0 ? PointInPolygonResult::IsOutside : PointInPolygonResult::IsInside;
+    return results;
 }
 
 }  // namespace clipper2next::internal

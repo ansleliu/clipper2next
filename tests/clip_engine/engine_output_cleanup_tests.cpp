@@ -54,36 +54,19 @@ TEST(Clipper2NextEngineOutputCleanupTests, OutputCleanupRemovesDuplicateClosedVe
     EXPECT_EQ(next::internal::point_count(output_record->pts), 4);
 }
 
-TEST(Clipper2NextEngineOutputCleanupTests, BoundsScanDoesNotMaterializeAnOwningPath) {
+TEST(Clipper2NextEngineOutputCleanupTests, BoundsScanMeasuresTheLinkedOutput) {
     next::internal::clipper_base_state state;
     auto* output_record = &state.output_owner_.create_outrec();
     make_output_ring(*output_record, {{0, 0}, {10, 0}, {10, 10}, {0, 10}});
     next::internal::engine_output_cleanup_options options;
     options.preserve_collinear = true;
     options.using_polytree = true;
-    options.path_storage = next::internal::output_path_storage::linked_points;
     const auto valid = next::internal::check_bounds(
         state.output_owner_.records(), output_record, options);
 
     EXPECT_TRUE(valid);
     EXPECT_EQ(output_record->bounds, (next::Rect64{0, 0, 10, 10}));
-    EXPECT_TRUE(output_record->path.empty());
-}
-
-TEST(Clipper2NextEngineOutputCleanupTests, BoundsScanMaterializesPathForOwningTreeOutput) {
-    next::internal::clipper_base_state state;
-    auto* output_record = &state.output_owner_.create_outrec();
-    make_output_ring(*output_record, {{0, 0}, {10, 0}, {10, 10}, {0, 10}});
-    next::internal::engine_output_cleanup_options options;
-    options.preserve_collinear = true;
-    options.using_polytree = true;
-    options.path_storage = next::internal::output_path_storage::owning_path;
-    const auto valid = next::internal::check_bounds(
-        state.output_owner_.records(), output_record, options);
-
-    EXPECT_TRUE(valid);
-    EXPECT_EQ(output_record->bounds, (next::Rect64{0, 0, 10, 10}));
-    EXPECT_EQ(output_record->path.size(), 4U);
+    EXPECT_EQ(next::internal::point_count(output_record->pts), 4);
 }
 
 TEST(Clipper2NextEngineOutputCleanupTests, CleanupLocalCompactionRemovesInteriorDuplicate) {

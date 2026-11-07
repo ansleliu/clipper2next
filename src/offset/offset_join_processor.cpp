@@ -17,6 +17,11 @@ namespace {
         state.arc = make_arc_parameters(
             state.group_delta, arc_tolerance, arc_segments_per_quadrant);
     }
+    if (has_delta_callback && state.path_out_charge.context()) {
+        const auto work = checked_size_multiply(checked_size_add(arc_step_count(state.arc, pi), 3U), 4U);
+        const auto error = state.path_out_charge.context()->try_add_work(work);
+        if (error != clipper_error_code::ok) { raise_clipper_error(error); }
+    }
     return state.arc;
 }
 
@@ -43,23 +48,22 @@ auto append_offset_join(offset_state& state,
     }
 
     if (!std::isfinite(state.group_delta)) {
-        state.path_out.emplace_back(path[current_index]);
-        return;
+        raise_clipper_error(clipper_error_code::invalid_argument);
     }
 
     if (std::fabs(state.group_delta) <= offset_floating_point_tolerance) {
-        state.path_out.emplace_back(path[current_index]);
+        offset_point_appender{state.path_out, &state.path_out_charge, 1U, options.output_growth}.append(path[current_index]);
         return;
     }
 
     if (cos_a > -0.999 && (sin_a * state.group_delta < 0)) {
         append_perpendicular(
             state.path_out, path[current_index], state.normals[previous_index],
-            state.group_delta, options.coordinate_rounding);
-        state.path_out.emplace_back(path[current_index]);
+            state.group_delta, options.coordinate_rounding, &state.path_out_charge, options.output_growth);
+        offset_point_appender{state.path_out, &state.path_out_charge, 1U, options.output_growth}.append(path[current_index]);
         append_perpendicular(
             state.path_out, path[current_index], state.normals[current_index],
-            state.group_delta, options.coordinate_rounding);
+            state.group_delta, options.coordinate_rounding, &state.path_out_charge, options.output_growth);
     } else if (cos_a > 0.999 && options.join_type != JoinType::Round) {
         append_miter(state.path_out,
                      path,
@@ -68,7 +72,7 @@ auto append_offset_join(offset_state& state,
                      previous_index,
                      state.group_delta,
                      cos_a,
-                     options.coordinate_rounding);
+                     options.coordinate_rounding, &state.path_out_charge, options.output_growth);
     } else if (options.join_type == JoinType::Miter) {
         if (cos_a > state.temp_limit - 1) {
             append_miter(state.path_out,
@@ -78,7 +82,7 @@ auto append_offset_join(offset_state& state,
                          previous_index,
                          state.group_delta,
                          cos_a,
-                         options.coordinate_rounding);
+                         options.coordinate_rounding, &state.path_out_charge, options.output_growth);
         } else {
             append_square(state.path_out,
                           path,
@@ -86,7 +90,7 @@ auto append_offset_join(offset_state& state,
                           current_index,
                           previous_index,
                           state.group_delta,
-                          options.coordinate_rounding);
+                          options.coordinate_rounding, &state.path_out_charge, options.output_growth);
         }
     } else if (options.join_type == JoinType::Round) {
         const auto& arc = current_arc_parameters(
@@ -100,15 +104,15 @@ auto append_offset_join(offset_state& state,
                      state.group_delta,
                      arc,
                      std::atan2(sin_a, cos_a),
-                     options.coordinate_rounding);
+                     options.coordinate_rounding, &state.path_out_charge, options.output_growth);
     } else if (options.join_type == JoinType::Bevel) {
         append_bevel(
             state.path_out, path, state.normals, current_index, previous_index,
-            state.group_delta, options.coordinate_rounding);
+            state.group_delta, options.coordinate_rounding, &state.path_out_charge, options.output_growth);
     } else {
         append_square(
             state.path_out, path, state.normals, current_index, previous_index,
-            state.group_delta, options.coordinate_rounding);
+            state.group_delta, options.coordinate_rounding, &state.path_out_charge, options.output_growth);
     }
 }
 

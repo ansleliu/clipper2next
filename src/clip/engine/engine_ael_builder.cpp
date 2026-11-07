@@ -2,7 +2,8 @@
 
 namespace clipper2next::internal {
 
-auto insert_left_edge(clipper_base_state& state, active_edge_node& edge) -> void {
+auto insert_left_edge(clipper_base_state& state, active_edge_node& edge,
+                      active_edge_node* previous_minimum) -> void {
     if (!state.actives_) {
         edge.prev_in_ael = nullptr;
         edge.next_in_ael = nullptr;
@@ -11,6 +12,12 @@ auto insert_left_edge(clipper_base_state& state, active_edge_node& edge) -> void
         insert_before_in_ael(edge, *state.actives_, state.actives_);
     } else {
         active_edge_node* insert_after = state.actives_;
+        // Minima on this scanline arrive in x order. Every resident before
+        // a strictly smaller previous minimum is already before this edge.
+        // Equal x still starts at the head to preserve all geometric tie rules.
+        if (previous_minimum && previous_minimum->current_x < edge.current_x) {
+            insert_after = previous_minimum;
+        }
         while (insert_after->next_in_ael && is_valid_ael_order(*insert_after->next_in_ael, edge)) {
             insert_after = insert_after->next_in_ael;
         }

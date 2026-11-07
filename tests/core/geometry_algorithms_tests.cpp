@@ -1,3 +1,4 @@
+#include "clipper2next/geometry/translate.h"
 #include "clipper2next/geometry.h"
 #include "clipper2next/geometry/algorithms.h"
 #include "support/test_paths.h"
@@ -5,6 +6,10 @@
 #include <gtest/gtest.h>
 
 #include <limits>
+#include <bit>
+#include <cerrno>
+#include <cfenv>
+#include "clipper2next/geometry/path_transforms.h"
 
 namespace next = clipper2next;
 namespace test = clipper2next::tests;
@@ -109,4 +114,57 @@ TEST(Clipper2NextGeometryAlgorithmsTests, PathContainsPathRequiresInteriorContai
     EXPECT_TRUE(next::path_contains_path(inner, outer));
     EXPECT_FALSE(next::path_contains_path(crossing, outer));
     EXPECT_FALSE(next::path_contains_path(boundary_only, outer));
+}
+
+
+TEST(Clipper2NextGeometryAlgorithmsTests, TransformPathMatchesScalarAcrossMixedCoordinateStates) {
+    auto environment = std::fenv_t{};
+    ASSERT_EQ(std::fegetenv(&environment), 0);
+    struct restore_environment {
+        std::fenv_t* value;
+        ~restore_environment() { std::fesetenv(value); }
+    } restore{&environment};
+    const auto nan = (std::numeric_limits<double>::quiet_NaN)();
+    const auto inf = (std::numeric_limits<double>::infinity)();
+    const auto tiny = (std::numeric_limits<double>::denorm_min)();
+    const next::PathD input{
+        {2.5, -2.5}, {std::nextafter(0.5, 0.0), std::nextafter(-0.5, 0.0)},
+        {nan, inf}, {-inf, -0.0}, {0x1p63, -0x1p63}, {tiny, -tiny},
+    };
+    for (const int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
+        SCOPED_TRACE(mode);
+        ASSERT_EQ(std::fesetround(mode), 0);
+        auto expected = next::Path64(input.size());
+        std::feclearexcept(FE_ALL_EXCEPT);
+        errno = EDOM;
+        for (std::size_t i = 0; i < input.size(); ++i) {
+            expected[i].x = geotypes::coordinateCast<std::int64_t>(
+                input[i].x, geotypes::CoordinateRounding::NearestAwayFromZero);
+            expected[i].y = geotypes::coordinateCast<std::int64_t>(
+                input[i].y, geotypes::CoordinateRounding::NearestAwayFromZero);
+        }
+        const auto expected_flags = std::fetestexcept(FE_ALL_EXCEPT);
+        const auto expected_errno = errno;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        errno = EDOM;
+        const auto actual = next::transform_path<std::int64_t>(input);
+        EXPECT_EQ(std::fetestexcept(FE_ALL_EXCEPT), expected_flags);
+        EXPECT_EQ(errno, expected_errno);
+        EXPECT_EQ(std::fegetround(), mode);
+        EXPECT_EQ(actual, expected);
+    }
+}
+
+
+TEST(Clipper2NextGeometryAlgorithmsTests, TranslateInt64SaturatesEachCoordinateIndependently) {
+    constexpr auto low = (std::numeric_limits<std::int64_t>::lowest)();
+    constexpr auto high = (std::numeric_limits<std::int64_t>::max)();
+    const next::Path64 input{{high, low}, {low, high}, {0, -1}, {1, 0}};
+    const next::Path64 expected{{high, low}, {low + 1, high - 1}, {1, -2}, {2, -1}};
+    EXPECT_EQ(next::translate(input, std::int64_t{1}, std::int64_t{-1}), expected);
+    EXPECT_EQ(next::translate<std::int64_t>(input, 1, -1), expected);
+    const next::Path64 extreme{{high, low}, {low, high}};
+    const next::Path64 extreme_expected{{-1, -1}, {low, high}};
+    EXPECT_EQ(next::translate(extreme, low, high), extreme_expected);
+    EXPECT_EQ(next::translate<std::int64_t>(extreme, low, high), extreme_expected);
 }

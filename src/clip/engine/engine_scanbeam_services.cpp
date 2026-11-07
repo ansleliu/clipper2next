@@ -211,11 +211,9 @@ auto engine_scanbeam_services::do_intersections(int64_t top_y) -> void {
     state_->intersect_nodes_.clear();
 
     if (use_contiguous_unit_runs) {
-        top_edges_at_current_y_.clear();
-        for (auto* edge : contiguous_unit_edges_) {
-            edge->current_x = edge->scanbeam_top_x;
-            if (edge->top_point.y == top_y) { top_edges_at_current_y_.push_back(edge); }
-        }
+        restore_contiguous_scanbeam_coordinates(
+            top_y, {contiguous_unit_edges_.data(), contiguous_unit_edges_.size()},
+            top_edges_at_current_y_);
         current_x_adjusted_top_y_ = top_y;
     }
 }

@@ -2,6 +2,8 @@
 
 #include "clip/engine/private/engine_types.h"
 
+#include <array>
+
 namespace clipper2next::internal {
 
 [[nodiscard]] inline auto is_front(const active_edge_node& edge) noexcept -> bool {
@@ -93,10 +95,11 @@ inline auto set_owner(output_record_node* output_record, output_record_node* new
     output_record->owner = new_owner;
 }
 
-[[nodiscard]] auto point_in_output_polygon(const Point64& point, output_point_node* output_point)
-    -> PointInPolygonResult;
+[[nodiscard]] auto points_in_output_polygon(const std::array<Point64, 2>& points,
+                                            output_point_node* output_point)
+    -> std::array<PointInPolygonResult, 2>;
 
-[[nodiscard]] auto get_clean_path(output_point_node* output_point) -> Path64;
+[[nodiscard]] auto get_clean_path(output_point_node* output_point, scoped_workspace_charge& charge) -> Path64;
 
 [[nodiscard]] auto path2_contains_path1(output_point_node* first, output_point_node* second)
     -> bool;

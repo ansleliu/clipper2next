@@ -1,22 +1,27 @@
 #pragma once
 
-#include "clipper2next/api/error.h"
+#include "support/private/execution_resource_ledger.h"
 #include "clipper2next/offset/types.h"
 
 #include <cstddef>
+#include <algorithm>
+#include <limits>
+#include <utility>
 
 namespace clipper2next::internal {
 
 struct engine_resource_plan final {
     std::size_t work{};
     std::size_t workspace_bytes{};
+    std::size_t retained_output_bytes{};
+    std::size_t scratch_bytes{};
 };
 
-struct offset_engine_resource_context final {
+struct offset_engine_resource_context final : execution_resource_ledger {
     engine_resource_plan generation{};
     engine_resource_plan selected{};
-    std::size_t maximum_work{};
-    std::size_t maximum_workspace_bytes{};
+    std::size_t maximum_output_paths{(std::numeric_limits<std::size_t>::max)()};
+    std::size_t maximum_output_points{(std::numeric_limits<std::size_t>::max)()};
 };
 
 [[nodiscard]] auto plan_clip_engine_resources(std::size_t input_point_count)
@@ -43,11 +48,6 @@ struct offset_engine_resource_context final {
     std::size_t path_count,
     std::size_t point_count,
     std::size_t path_record_size,
-    std::size_t& result) noexcept -> clipper_error_code;
-
-[[nodiscard]] auto add_workspace_bytes(
-    std::size_t first,
-    std::size_t second,
     std::size_t& result) noexcept -> clipper_error_code;
 
 }  // namespace clipper2next::internal

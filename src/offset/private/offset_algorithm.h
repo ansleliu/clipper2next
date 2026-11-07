@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vector>
+#include <span>
 
 #include "offset/private/offset_group.h"
 #include "offset/private/offset_state.h"
@@ -19,13 +19,14 @@ struct offset_algorithm_options final {
     std::size_t arc_segments_per_quadrant{};
     bool preserve_collinear{false};
     bool reverse_solution{false};
-    bool check_input_coordinate_range{false};
     geotypes::CoordinateRounding coordinate_rounding{geotypes::CoordinateRounding::NearestEven};
     predicate_policy intersection_policy{};
 };
 
+// Callers validate operation parameters and group styles before selecting this kernel.
+// Unchecked input coordinates retain their existing admitted-range precondition.
 auto execute_offset_algorithm(offset_state& state,
-                              const std::vector<offset_group>& groups,
+                              std::span<const offset_group> groups,
                               double delta,
                               Paths64& solution,
                               PolyTree64* solution_tree,
@@ -34,21 +35,13 @@ auto execute_offset_algorithm(offset_state& state,
                               sync_bulk_executor_ref executor = {}) -> void;
 
 auto execute_offset_algorithm(offset_state& state,
-                              const std::vector<offset_group>& groups,
+                              std::span<const offset_group> groups,
                               double delta,
                               path_set64& solution,
                               const offset_algorithm_options& options,
                               delta_callback_ref delta_callback,
                               sync_bulk_executor_ref executor = {},
                               offset_engine_resource_context* resources = nullptr,
-                              bool* output_is_disjoint_simple_shells = nullptr) -> void;
-
-auto execute_offset_algorithm_scalar_reference(offset_state& state,
-                                               const std::vector<offset_group>& groups,
-                                               double delta,
-                                               Paths64& solution,
-                                               PolyTree64* solution_tree,
-                                               const offset_algorithm_options& options,
-                                               delta_callback_ref delta_callback) -> void;
+                              bool* output_is_disjoint_simple_shells = nullptr) -> scoped_workspace_charge;
 
 }  // namespace clipper2next::internal

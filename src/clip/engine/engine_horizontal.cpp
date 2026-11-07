@@ -76,7 +76,7 @@ auto reset_horizontal_direction(const active_edge_node& horizontal_edge,
 auto add_trial_horizontal_join(HorzSegmentList& horizontal_segments,
                                output_point_node* output_point) -> void {
     if (output_point->outrec->is_open) { return; }
-    horizontal_segments.emplace_back(*output_point);
+    horizontal_segments.push_back(horizontal_segment_node{*output_point});
 }
 
 }  // namespace clipper2next::internal

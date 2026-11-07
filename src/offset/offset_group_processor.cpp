@@ -5,21 +5,25 @@
 #include "offset/private/offset_join_processor.h"
 #include "offset/private/offset_open_path_processor.h"
 #include "offset/private/offset_output.h"
+#include "offset/private/offset_single_point.h"
 #include "support/private/scoped_nearest_rounding.h"
 
 #include <algorithm>
-#include <cmath>
 #include <utility>
 
 namespace clipper2next::internal {
 namespace {
 
-auto append_offset_path(Paths64& output, const Path64& path) -> void {
+auto append_offset_path(offset_state& state, Paths64& output, const Path64& path) -> void {
+    auto growth = state.reserve_output(path.size(), sizeof(Path64));
     output.emplace_back(path);
+    growth.commit();
 }
 
-auto append_offset_path(path_set64& output, const Path64& path) -> void {
+auto append_offset_path(offset_state& state, path_set64& output, const Path64& path) -> void {
+    auto growth = state.reserve_output(path.size(), sizeof(geotypes::PathDescriptor));
     output.append(path, geotypes::PathClosure::ClosedImplicit);
+    growth.commit();
 }
 
 template <typename Output>
@@ -31,27 +35,40 @@ auto offset_polygon(offset_state& state,
                     const offset_group_execution_options& options,
                     delta_callback_ref delta_callback,
                     Output& output) -> void {
-    state.path_out.clear();
-    state.path_out.reserve(
-        estimate_path_output_capacity(path.size(), join_type, EndType::Polygon, state.arc));
+    assert(state.path_out.empty() && state.path_out_charge.bytes() == 0U);
+    const auto output_capacity =
+        estimate_path_output_capacity(path.size(), join_type, EndType::Polygon, state.arc, state.group_delta);
+    state.path_out.reserve(output_capacity);
+    const auto point_rounding = delta_callback
+        ? offset_point_rounding{options.coordinate_rounding}
+        : offset_point_rounding::for_reserved_phase(
+              options.coordinate_rounding, state.path_out, output_capacity);
 
-    const offset_join_options join_options{
-        join_type, options.arc_tolerance, options.arc_segments_per_quadrant,
-        options.coordinate_rounding};
-    for (std::size_t current_index = 0, previous_index = path.size() - 1;
-         current_index < path.size();
-         previous_index = current_index, ++current_index) {
-        append_offset_join(state,
-                           group,
-                           path,
-                           callback_path,
-                           current_index,
-                           previous_index,
-                           join_options,
-                           delta_callback);
+    {
+        auto growth = scoped_workspace_growth{delta_callback ? nullptr : &state.path_out_charge};
+        // The reserved, callback-free phase only grows constructed points.
+        // A tight quota retains the original per-join admission/failure prefix.
+        auto* admitted = !delta_callback &&
+            growth.try_reserve_slots(output_capacity, sizeof(Point64)) == clipper_error_code::ok
+            ? &growth : nullptr;
+        const offset_join_options join_options{
+            join_type, options.arc_tolerance, options.arc_segments_per_quadrant,
+            point_rounding, admitted};
+        auto publication = state.publish_growth(delta_callback);
+        for (std::size_t current_index = 0, previous_index = path.size() - 1;
+             current_index < path.size();
+             previous_index = current_index, ++current_index) {
+            append_offset_join(state,
+                               group,
+                               path,
+                               callback_path,
+                               current_index,
+                               previous_index,
+                               join_options,
+                               delta_callback);
+        }
     }
-
-    append_offset_path(output, state.path_out);
+    append_offset_path(state, output, state.path_out);
 }
 
 template <typename Output>
@@ -67,14 +84,19 @@ auto offset_open_joined(offset_state& state,
         state, group, path, callback_path, join_type, options,
         delta_callback, output);
 
+    auto reverse_charge = scoped_workspace_charge{state.path_out_charge.context()};
+    auto reverse_growth = scoped_workspace_growth{reverse_charge, path.size(), sizeof(Point64)};
     Path64 reverse_path(path.begin(), path.end());
+    reverse_growth.commit();
     std::reverse(reverse_path.begin(), reverse_path.end());
 
     std::reverse(state.normals.begin(), state.normals.end());
-    state.normals.emplace_back(state.normals[0]);
-    state.normals.erase(state.normals.begin());
+    std::rotate(state.normals.begin(), state.normals.begin() + 1, state.normals.end());
     negate_path(state.normals);
 
+    // Joined starts a second output phase after its reverse input is live.
+    state.path_out.clear();
+    state.path_out_charge.release();
     offset_polygon(state,
                    group,
                    reverse_path,
@@ -83,43 +105,6 @@ auto offset_open_joined(offset_state& state,
                    options,
                    delta_callback,
                    output);
-}
-
-template <typename Output>
-auto append_single_point_offset(offset_state& state,
-                                const offset_group& group,
-                                std::span<const Point64> path,
-                                const Path64& callback_path,
-                                const offset_group_execution_options& options,
-                                delta_callback_ref delta_callback,
-                                Output& output) -> void {
-    if (delta_callback) {
-        state.group_delta = delta_callback(callback_path, state.normals, 0, 0);
-        if (group.is_reversed) { state.group_delta = -state.group_delta; }
-    }
-
-    if (!std::isfinite(state.group_delta)) { return; }
-
-    const auto abs_delta = std::fabs(state.group_delta);
-    if (state.group_delta < 1) { return; }
-
-    state.path_out.reserve(estimate_single_point_output_capacity(group.join_type, state.arc));
-    const auto& point = path[0];
-    if (group.join_type == JoinType::Round) {
-        const auto steps = arc_step_count(state.arc, 2 * pi);
-        state.path_out = make_ellipse(point, abs_delta, abs_delta, steps);
-        // A finite radius >= 1 must generate a circle; empty signals an
-        // unrepresentable ellipse, not a successful empty offset.
-        if (state.path_out.empty()) { raise_clipper_error(clipper_error_code::coordinate_range); }
-    } else {
-        const auto delta = std::ceil(abs_delta);
-        state.path_out = Path64{
-            offset_point({point.x - delta, point.y - delta}, options.coordinate_rounding),
-            offset_point({point.x + delta, point.y - delta}, options.coordinate_rounding),
-            offset_point({point.x + delta, point.y + delta}, options.coordinate_rounding),
-            offset_point({point.x - delta, point.y + delta}, options.coordinate_rounding)};
-    }
-    append_offset_path(output, state.path_out);
 }
 
 template <typename Output>
@@ -132,13 +117,18 @@ auto build_offset_path_with_end_type(offset_state& state,
                                      EndType end_type,
                                      Output& output) -> void {
     const auto path_length = path.size();
-    state.path_out.clear();
-    state.callback_path.clear();
-    if (delta_callback) { state.callback_path.assign(path.begin(), path.end()); }
+    state.clear_scratch();
+    if (delta_callback) {
+        auto growth = scoped_workspace_growth{state.callback_charge, path.size(), sizeof(Point64)};
+        state.callback_path.assign(path.begin(), path.end());
+        growth.commit();
+    }
 
+    if (path_length == 0) { return; }
     if (path_length == 1) {
-        append_single_point_offset(
-            state, group, path, state.callback_path, options, delta_callback, output);
+        build_single_point_offset(
+            state, group, path.front(), state.callback_path, options, delta_callback);
+        if (!state.path_out.empty()) { append_offset_path(state, output, state.path_out); }
         return;
     }
 
@@ -146,7 +136,7 @@ auto build_offset_path_with_end_type(offset_state& state,
         end_type = group.join_type == JoinType::Round ? EndType::Round : EndType::Square;
     }
 
-    assign_normals(state.normals, path);
+    state.construct_normals(path);
     if (end_type == EndType::Polygon) {
         offset_polygon(state,
                        group,
@@ -184,9 +174,10 @@ auto build_offset_path_result(offset_state& state,
                               const offset_group& group,
                               std::span<const Point64> path,
                               const offset_group_execution_options& options,
+                              const double operation_delta,
                               delta_callback_ref delta_callback) -> offset_path_build_result {
     const auto rounding_guard = scoped_nearest_rounding{};
-    prepare_offset_group_state(state, group, options);
+    prepare_offset_group_state(state, group, options, operation_delta);
     auto result = offset_path_build_result{};
     build_offset_path_with_end_type(
         state, group, path, options, delta_callback,
@@ -198,9 +189,10 @@ auto append_offset_path(
     const offset_group& group,
     const std::span<const Point64> path,
     const offset_group_execution_options& options,
+    const double operation_delta,
     path_set64& output) -> void {
     const auto rounding_guard = scoped_nearest_rounding{};
-    prepare_offset_group_state(state, group, options);
+    prepare_offset_group_state(state, group, options, operation_delta);
     build_offset_path_with_end_type(
         state, group, path, options, nullptr,
         group.join_type, group.end_type, output);
@@ -211,33 +203,30 @@ auto build_offset_group_paths_impl(offset_state& state,
                                    const offset_group_execution_options& options,
                                    delta_callback_ref delta_callback,
                                    Output& output) -> void {
-    auto join_type = group.join_type;
-    auto end_type = group.end_type;
     for (std::size_t path_index = 0; path_index < group.path_count(); ++path_index) {
         const auto path = group.path(path_index);
         build_offset_path_with_end_type(
-            state, group, path, options, delta_callback, join_type, end_type, output);
-        if ((path.size() == 2) && (group.end_type == EndType::Joined)) {
-            end_type = group.join_type == JoinType::Round ? EndType::Round : EndType::Square;
-        }
+            state, group, path, options, delta_callback, group.join_type, group.end_type, output);
     }
 }
 auto build_offset_group_paths(offset_state& state,
                               const offset_group& group,
                               const offset_group_execution_options& options,
+                              const double operation_delta,
                               delta_callback_ref delta_callback,
                               Paths64& output) -> void {
     const auto rounding_guard = scoped_nearest_rounding{};
-    prepare_offset_group_state(state, group, options);
+    prepare_offset_group_state(state, group, options, operation_delta);
     build_offset_group_paths_impl(state, group, options, delta_callback, output);
 }
 auto build_offset_group_paths(offset_state& state,
                               const offset_group& group,
                               const offset_group_execution_options& options,
+                              const double operation_delta,
                               delta_callback_ref delta_callback,
                               path_set64& output) -> void {
     const auto rounding_guard = scoped_nearest_rounding{};
-    prepare_offset_group_state(state, group, options);
+    prepare_offset_group_state(state, group, options, operation_delta);
     build_offset_group_paths_impl(state, group, options, delta_callback, output);
 }
 }  // namespace clipper2next::internal

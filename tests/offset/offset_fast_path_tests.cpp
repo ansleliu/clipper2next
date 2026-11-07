@@ -2,6 +2,7 @@
 
 #include "clipper2next/clipper.h"
 #include "offset/private/offset_algorithm.h"
+#include "offset/private/offset_algorithm_support.h"
 #include "offset/private/offset_fast_path.h"
 #include "offset/private/offset_group.h"
 #include "offset/private/offset_state.h"
@@ -27,24 +28,7 @@ namespace {
 
 }  // namespace
 
-namespace clipper2next::internal {
 
-[[nodiscard]] auto can_return_direct_simple_offset(const std::vector<offset_group>& groups,
-                                                   const Paths64& solution,
-                                                   double delta,
-                                                   PolyTree64* solution_tree,
-                                                   const offset_algorithm_options& options,
-                                                   bool paths_reversed) -> bool;
-[[nodiscard]] auto can_return_direct_disjoint_simple_offset(
-    const std::vector<offset_group>& groups,
-    const Paths64& solution,
-    double delta,
-    PolyTree64* solution_tree,
-    const offset_algorithm_options& options,
-    bool paths_reversed) -> bool;
-auto canonicalize_direct_offset_solution(Paths64& solution, bool reverse_solution) -> void;
-
-}  // namespace clipper2next::internal
 
 TEST(Clipper2NextOffsetFastPathTests, InflatePathsFastPathUsesCallerOwnedState) {
     next::internal::offset_state state;
@@ -149,4 +133,48 @@ TEST(Clipper2NextOffsetFastPathTests, DisjointSimpleRawOffsetLimitRejectsAboveCo
 
     EXPECT_FALSE(next::internal::can_return_direct_disjoint_simple_offset(
         groups, input, 10.0, nullptr, {}, false));
+}
+
+
+TEST(Clipper2NextOffsetFastPathTests, FlatCertificatePreservesAlreadySimpleDisjointPoints) {
+    const next::Paths64 input{
+        {{0, 0}, {5, 0}, {10, 0}, {10, 10}, {0, 10}},
+        {{30, 0}, {35, 0}, {40, 0}, {40, 10}, {30, 10}},
+    };
+    std::vector<next::internal::offset_group> groups;
+    groups.emplace_back(input, next::JoinType::Miter, next::EndType::Polygon);
+    next::path_set64 flat;
+    for (const auto& path : input) { flat.append(path, geotypes::PathClosure::ClosedImplicit); }
+    const auto points = std::vector<next::Point64>(flat.points().begin(), flat.points().end());
+    ASSERT_TRUE(next::internal::try_prepare_direct_disjoint_simple_offset(
+        groups, flat, 10.0, {}, false));
+    EXPECT_EQ(flat.size(), input.size());
+    EXPECT_EQ(std::vector<next::Point64>(flat.points().begin(), flat.points().end()), points);
+}
+
+TEST(Clipper2NextOffsetFastPathTests, FlatCertificateOverlappingSimpleBoundsNeedNoPreparationStorage) {
+    const next::Paths64 input{
+        {{0, 0}, {10, 0}, {10, 10}, {0, 10}},
+        {{5, 5}, {15, 5}, {15, 15}, {5, 15}},
+    };
+    std::vector<next::internal::offset_group> groups;
+    groups.emplace_back(input, next::JoinType::Miter, next::EndType::Polygon);
+    next::path_set64 flat;
+    for (const auto& path : input) { flat.append(path, geotypes::PathClosure::ClosedImplicit); }
+    const auto points = std::vector<next::Point64>(flat.points().begin(), flat.points().end());
+    next::internal::execution_resource_ledger resources;
+    next::internal::scoped_workspace_charge raw{&resources};
+    const auto raw_bytes = flat.point_count() * sizeof(next::Point64) +
+        flat.size() * sizeof(geotypes::PathDescriptor);
+    raw.set_live_slots(raw_bytes, 1U);
+    resources.maximum_workspace_bytes = raw_bytes + flat.size() * sizeof(next::Rect64);
+    bool direct = true;
+    EXPECT_NO_THROW(direct = next::internal::try_prepare_direct_disjoint_simple_offset(
+        groups, flat, 10.0, {}, false, &raw));
+    EXPECT_FALSE(direct);
+    EXPECT_EQ(raw.bytes(), raw_bytes);
+    EXPECT_EQ(resources.engine_bytes, raw_bytes);
+    EXPECT_EQ(resources.engine_high_water, resources.maximum_workspace_bytes);
+    EXPECT_EQ(resources.reserved_engine_bytes, 0U);
+    EXPECT_EQ(std::vector<next::Point64>(flat.points().begin(), flat.points().end()), points);
 }

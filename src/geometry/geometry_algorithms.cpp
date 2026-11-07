@@ -1,3 +1,4 @@
+#include "geometry/private/trim_collinear.h"
 #include "clipper2next/geometry/algorithms.h"
 #include "geometry/private/geometry_predicates.h"
 
@@ -9,11 +10,7 @@
 namespace clipper2next {
 namespace {
 
-[[nodiscard]] inline auto collinear_fast(const Point64& first,
-                                         const Point64& shared,
-                                         const Point64& second) -> bool {
-    return internal::cross_product_sign(first, shared, second) == 0;
-}
+
 
 template <typename Flags>
 auto next_unflagged(std::size_t current, std::size_t high, const Flags& flags) -> std::size_t {
@@ -142,42 +139,8 @@ auto simplify_path_with_storage(const Path64& path,
 }
 }  // namespace
 auto trim_collinear(const Path64& path, bool is_open_path) -> Path64 {
-    auto length = path.size();
-    if (length < 3) {
-        if (!is_open_path || length < 2 || path[0] == path[1]) { return {}; }
-        return path;
-    }
-    Path64 result;
-    result.reserve(length);
-    auto source = path.cbegin();
-    auto stop = path.cend() - 1;
-
-    if (!is_open_path) {
-        while (source != stop && collinear_fast(*stop, *source, *(source + 1))) { ++source; }
-        while (source != stop && collinear_fast(*(stop - 1), *stop, *source)) { --stop; }
-        if (source == stop) { return {}; }
-    }
-
-    auto previous = source++;
-    result.emplace_back(*previous);
-    for (; source != stop; ++source) {
-        if (!collinear_fast(*previous, *source, *(source + 1))) {
-            previous = source;
-            result.emplace_back(*previous);
-        }
-    }
-
-    if (is_open_path) {
-        result.emplace_back(*source);
-    } else if (!collinear_fast(*previous, *stop, result[0])) {
-        result.emplace_back(*stop);
-    } else {
-        while (result.size() > 2 &&
-               collinear_fast(result[result.size() - 1], result[result.size() - 2], result[0])) {
-            result.pop_back();
-        }
-        if (result.size() < 3) { return {}; }
-    }
+    auto result = Path64{};
+    internal::trim_collinear_into(path, is_open_path, result);
     return result;
 }
 

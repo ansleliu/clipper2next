@@ -55,6 +55,20 @@ class DefaultOracleDependencyTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_ignores_generated_plan_material_without_ignoring_product_sources(self) -> None:
+        generated = {
+            ".superpowers/sdd/geometry-plan/legacy-reference.cpp":
+                '#include "clipper2/clipper.h"\n',
+        }
+        result = self.run_checker({**generated, "src/product.cpp": "#include <vector>\n"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        result = self.run_checker(
+            {**generated, "src/new_product.cpp": '#include "clipper2/clipper.h"\n'}
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("legacy_include", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

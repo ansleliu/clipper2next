@@ -32,8 +32,9 @@ class Clipper2NextTestPackage(ConanFile):
         cmake.build()
 
     def test(self):
-        if can_run(self):
-            executable = os.path.join(
-                self.cpp.build.bindir, "clipper2next_package_test"
+        if not can_run(self):
+            raise RuntimeError(
+                "can_run=false: native correction behavior is not qualified"
             )
-            self.run(executable, env="conanrun")
+        executable = os.path.join(self.cpp.build.bindir, "clipper2next_package_test")
+        self.run(executable, env="conanrun")

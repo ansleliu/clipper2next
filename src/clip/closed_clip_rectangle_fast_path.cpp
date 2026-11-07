@@ -1,80 +1,57 @@
-#include "clip/private/closed_clip_fast_path.h"
-
 #include "clip/private/closed_clip_rectangle_operations.h"
-
-#include <utility>
 
 namespace clipper2next::internal {
 
-auto try_execute_two_rectangle_intersection(const clip_request64& request,
-                                            const clip_request_metadata64& metadata,
-                                            paths64_result& result) -> bool {
-    if (request.clip_type != ClipType::Intersection || metadata.subject_path_count != 1U ||
-        metadata.clip_path_count != 1U || !metadata.single_subject_rect ||
-        !metadata.single_clip_rect) {
-        return false;
+auto execute_two_rectangle_intersection(const Rect64& subject,
+                                       const Rect64& clip,
+                                       paths64_result& result) -> void {
+    const auto intersection = strict_intersection_rect(subject, clip);
+    if (intersection) {
+        const std::array layouts{rectangle_clip_solution_layout(*intersection)};
+        materialize_rectangle_paths(result, layouts);
+    } else {
+        materialize_rectangle_paths(result, std::array<rectangle_path_layout, 0>{});
     }
-    const auto intersection =
-        strict_intersection_rect(*metadata.single_subject_rect, *metadata.single_clip_rect);
-    result.closed.clear();
-    if (intersection) { result.closed.emplace_back(rectangle_clip_solution_path(*intersection)); }
-    result.open.clear();
-    return true;
 }
 
-auto try_execute_two_rectangle_union(const clip_request64& request,
-                                     const clip_request_metadata64& metadata,
+auto try_execute_two_rectangle_union(const Rect64& subject,
+                                     const Rect64& clip,
                                      paths64_result& result) -> bool {
-    if (request.clip_type != ClipType::Union || metadata.subject_path_count != 1U ||
-        metadata.clip_path_count != 1U || !metadata.single_subject_rect ||
-        !metadata.single_clip_rect) {
-        return false;
-    }
-
-    Path64 union_path;
-    if (!try_build_two_rectangle_union(
-            *metadata.single_subject_rect, *metadata.single_clip_rect, union_path)) {
-        if (rectangles_have_strict_overlap(*metadata.single_subject_rect,
-                                           *metadata.single_clip_rect) ||
-            rectangles_share_edge_segment(*metadata.single_subject_rect,
-                                          *metadata.single_clip_rect)) {
+    std::array<rectangle_path_layout, 1> layouts;
+    if (!try_layout_two_rectangle_union(subject, clip, layouts[0])) {
+        if (rectangles_have_strict_overlap(subject, clip) ||
+            rectangles_share_edge_segment(subject, clip)) {
             return false;
         }
-        result.closed = {rectangle_clip_solution_path(*metadata.single_subject_rect),
-                         rectangle_clip_solution_path(*metadata.single_clip_rect)};
-        result.open.clear();
+        const std::array disjoint{
+            rectangle_clip_solution_layout(subject), rectangle_clip_solution_layout(clip)};
+        materialize_rectangle_paths(result, disjoint);
         return true;
     }
 
-    result.closed.clear();
-    result.closed.emplace_back(std::move(union_path));
-    result.open.clear();
+    materialize_rectangle_paths(result, layouts);
     return true;
 }
 
-auto try_execute_two_rectangle_difference(const clip_request64& request,
-                                          const clip_request_metadata64& metadata,
+auto try_execute_two_rectangle_difference(const Rect64& subject,
+                                          const Rect64& clip,
                                           paths64_result& result) -> bool {
-    if (request.clip_type != ClipType::Difference || metadata.subject_path_count != 1U ||
-        metadata.clip_path_count != 1U || !metadata.single_subject_rect ||
-        !metadata.single_clip_rect) {
-        return false;
-    }
-
-    Path64 difference_path;
-    if (!strict_intersection_rect(*metadata.single_subject_rect, *metadata.single_clip_rect)) {
-        result.closed = {rectangle_clip_solution_path(*metadata.single_subject_rect)};
-        result.open.clear();
+    if (!strict_intersection_rect(subject, clip)) {
+        if (rectangles_share_edge_segment(subject, clip)) { return false; }
+        const std::array layouts{rectangle_clip_solution_layout(subject)};
+        materialize_rectangle_paths(result, layouts);
         return true;
     }
-    if (!try_build_rectangle_corner_difference(
-            *metadata.single_subject_rect, *metadata.single_clip_rect, difference_path)) {
+    std::array<rectangle_path_layout, 1> layouts;
+    if (!try_layout_rectangle_corner_difference(subject, clip, layouts[0])) {
         return false;
     }
 
-    result.closed.clear();
-    if (!difference_path.empty()) { result.closed.push_back(std::move(difference_path)); }
-    result.open.clear();
+    if (layouts[0].point_count() != 0U) {
+        materialize_rectangle_paths(result, layouts);
+    } else {
+        materialize_rectangle_paths(result, std::array<rectangle_path_layout, 0>{});
+    }
     return true;
 }
 

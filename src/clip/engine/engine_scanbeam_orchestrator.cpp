@@ -1,6 +1,7 @@
 #include "clip/engine/private/engine_scanbeam_orchestrator.h"
 
 #include "clip/engine/private/engine_active_list.h"
+#include "clip/engine/private/engine_lifecycle.h"
 #include "clip/engine/private/engine_horizontal.h"
 #include "clip/engine/private/engine_output.h"
 #include "clip/engine/private/engine_output_topology.h"
@@ -87,7 +88,7 @@ auto do_maxima(clipper_base_state& state,
                 }
                 edge.outrec = nullptr;
             }
-            remove_from_ael(edge, state.actives_);
+            retire_active_edge(state, edge);
         }
         return next_edge;
     }
@@ -113,8 +114,8 @@ auto do_maxima(clipper_base_state& state,
         if (is_hot_edge(edge)) {
             add_local_max_poly(state, edge, *max_pair, edge.top_point, succeeded);
         }
-        remove_from_ael(*max_pair, state.actives_);
-        remove_from_ael(edge, state.actives_);
+        retire_active_edge(state, *max_pair);
+        retire_active_edge(state, edge);
         return previous_edge ? previous_edge->next_in_ael.get() : state.actives_.get();
     }
 
@@ -122,8 +123,8 @@ auto do_maxima(clipper_base_state& state,
         add_local_max_poly(state, edge, *max_pair, edge.top_point, succeeded);
     }
 
-    remove_from_ael(edge, state.actives_);
-    remove_from_ael(*max_pair, state.actives_);
+    retire_active_edge(state, edge);
+    retire_active_edge(state, *max_pair);
     return previous_edge ? previous_edge->next_in_ael.get() : state.actives_.get();
 }
 

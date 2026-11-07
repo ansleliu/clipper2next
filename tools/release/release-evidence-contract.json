@@ -700,6 +700,7 @@
       "release_gated": true,
       "required_tests": [
         "Clipper2NextDifferentialClipTests.RandomizedClosedPolygonsAllFillRulesMatchLegacy",
+        "Clipper2NextDifferentialClipTests.ScanlineProjectionMatchesLegacyFloatingEnvironment",
         "ExternalGeometryCorpus.OverlayVerificationCorpusExecutesAgainstLegacy"
       ],
       "required_benchmarks": [
@@ -715,8 +716,11 @@
       "release_gated": true,
       "required_tests": [
         "Clipper2NextDifferentialOffsetTests.PolygonJoinTypeMatrixMatchesLegacy",
-        "Clipper2NextDifferentialOffsetTests.OpenEndTypeMatrixMatchesLegacy",
-        "ExternalGeometryCorpus.OffsetVerificationCorpusExecutesAgainstLegacy"
+        "Clipper2NextDifferentialOffsetTests.OpenJoinAndEndTypeMatrixMatchesLegacy",
+        "ExternalGeometryCorpus.OffsetVerificationCorpusExecutesAgainstLegacy",
+        "clipper2next_offset_contract_oracle_differential",
+        "clipper2next_offset_contract_oracle_corpus",
+        "clipper2next_offset_contract_oracle_benchmark"
       ],
       "required_benchmarks": [
         "BM_external_offset_legacy/geometry_corpus",
@@ -810,8 +814,11 @@
       "id": "triangulation",
       "release_gated": true,
       "required_tests": [
-        "Clipper2NextDifferentialTriangulationTests.GeneratedSimpleCorpusMatchesLegacy",
-        "ExternalGeometryCorpus.TriangulationVerificationCorpusExecutesAgainstLegacy"
+        "Clipper2NextDifferentialTriangulationTests.ActualBoundaryContractsRecordBothEngines",
+        "ExternalGeometryCorpus.TriangulationVerificationCorpusExecutesAgainstLegacy",
+        "clipper2next_triangulation_contract_oracle",
+        "clipper2next_triangulation_contract_oracle_corpus",
+        "clipper2next_triangulation_contract_oracle_benchmark"
       ],
       "required_benchmarks": [
         "BM_external_triangulation_legacy/geometry_corpus",
@@ -841,6 +848,7 @@
       "release_gated": false,
       "required_tests": [
         "Clipper2NextDifferentialGeometryAlgorithmsTests.SimplifyAndRdpGeneratedCorpusMatchesLegacy",
+        "Clipper2NextDifferentialGeometryAlgorithmsTests.EllipseMatchesLegacyAcrossFloatingEnvironmentsAndMagnitudes",
         "ExternalGeometryCorpus.BoundsVerificationCorpusExecutesAgainstLegacy",
         "ExternalGeometryCorpus.SimplificationVerificationCorpusExecutesAgainstLegacy",
         "ExternalGeometryCorpus.CollinearTrimmingVerificationCorpusExecutesAgainstLegacy",
@@ -862,7 +870,15 @@
       "release_gated": false,
       "required_tests": [
         "Clipper2NextDifferentialTransformTests.TranslatePathMatchesLegacy",
-        "Clipper2NextDifferentialTransformTests.ScalePathMatchesLegacy",
+        "Clipper2NextDifferentialTransformTests.TranslatePointMatchesLegacyAtHalfInteger",
+        "Clipper2NextDifferentialTransformTests.ClosestPointMatchesLegacyAcrossFloatingEnvironments",
+        "Clipper2NextDifferentialTransformTests.ScaleIntegralRectMatchesLegacyTruncation",
+        "Clipper2NextDifferentialTransformTests.ScaleFloatingRectMatchesLegacyNearestAway",
+        "Clipper2NextValueTypeApiTests.RectScaledMatchesLegacyIntegralTruncation",
+        "Clipper2NextDifferentialTransformTests.TransformPathMatchesLegacyForFractionalCoordinates",
+        "Clipper2NextDifferentialTransformTests.ScalePathMatchesLegacyAtHalfInteger",
+        "Clipper2NextDifferentialTransformTests.ScalePathsMatchesLegacyAcrossFloatingEnvironments",
+        "Clipper2NextDifferentialTransformTests.ScalePathMatchesLegacyAwayFromHalfInteger",
         "ExternalGeometryCorpus.ScalingVerificationCorpusExecutesAgainstLegacy",
         "ExternalGeometryCorpus.TranslationVerificationCorpusExecutesAgainstLegacy"
       ],
@@ -895,5 +911,43 @@
     "compiler",
     "build_flags",
     "runner_id"
-  ]
+  ],
+  "authority": {
+    "engines": [
+      "legacy",
+      "next"
+    ],
+    "selection_phase": "before-execution",
+    "default_domain": "strict-legacy-runtime",
+    "triangulation_domain": "triangulation-exact-contract",
+    "triangulation_contracts": [
+      "coverage-constraint",
+      "coverage-constraint-cdt"
+    ],
+    "offset_domain": "offset-correction-contract",
+    "offset_contracts": [
+      "exact-area-thin-bevel",
+      "mixed-group-winding",
+      "group-parameter-isolation",
+      "cardinal-rounding",
+      "constant-callback-analytic"
+    ],
+    "offset_requires_absolute_expected": true,
+    "unknown_difference": "FAIL",
+    "correction_max_regression_percent": 0,
+    "correction_max_cv_percent": 5,
+    "correction_cv_host_overrides": {
+      "Windows": {
+        "host_name": "DESKTOP-S2N5RLE",
+        "max_cv_percent": 30
+      }
+    },
+    "correction_min_legacy_speedup": 1.2,
+    "difference_classes": [
+      "api-rounding-semantics-mismatch",
+      "legacy-invalid-result",
+      "legal-triangulation-difference",
+      "product-regression"
+    ]
+  }
 }

@@ -27,8 +27,8 @@ auto build_intersection_list_from_sel(active_edge_node_ref& sorted_edges,
                                       predicate_policy policy = {}) -> bool;
 
 auto build_intersection_list_from_contiguous_unit_runs(
-    std::vector<active_edge_node*>& edges,
-    std::vector<active_edge_node*>& scratch,
+    engine_buffer<active_edge_node*>& edges,
+    engine_buffer<active_edge_node*>& scratch,
     IntersectNodeList& intersections,
     int64_t top_y,
     int64_t bottom_y,

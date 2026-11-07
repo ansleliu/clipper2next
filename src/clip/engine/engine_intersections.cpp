@@ -101,7 +101,7 @@ auto add_intersection_node(IntersectNodeList& intersections,
         }
     }
 
-    intersections.emplace_back(first, second, intersection);
+    intersections.push_back(IntersectNode{first, second, intersection});
 }
 
 auto build_intersection_list_from_sel(active_edge_node*& sorted_edges,

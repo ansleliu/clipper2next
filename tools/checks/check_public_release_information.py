@@ -7,6 +7,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.release.source_inventory import (
+    exported_inventory,
+    validate_inventory,
+    public_archive_inventory,
+)
+
 
 IGNORED_DIRECTORIES = {
     ".git",
@@ -68,7 +76,10 @@ PATTERNS = (
     (
         "internal_identity",
         re.compile(
-            r"(?i)(?<![A-Za-z0-9])(?:lk" r"sense[0-9]*|link" r"sense|ai" r"fi)(?![A-Za-z0-9])"
+            r"(?i)(?<![A-Za-z0-9])(?:lk"
+            r"sense[0-9]*|link"
+            r"sense|ai"
+            r"fi)(?![A-Za-z0-9])"
         ),
     ),
     (
@@ -117,10 +128,10 @@ def candidate_files(root: Path) -> list[Path]:
     return sorted(result)
 
 
-def find_findings(root: Path) -> list[Finding]:
+def find_findings(root: Path, files: list[Path] | None = None) -> list[Finding]:
     repository = root.resolve()
     findings: list[Finding] = []
-    for path in candidate_files(repository):
+    for path in candidate_files(repository) if files is None else files:
         relative = path.relative_to(repository).as_posix()
         for line_number, line in enumerate(
             path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
@@ -132,10 +143,22 @@ def find_findings(root: Path) -> list[Finding]:
                         "@example.invalid"
                     ):
                         continue
-                    findings.append(
-                        Finding(relative, line_number, category, value)
-                    )
+                    findings.append(Finding(relative, line_number, category, value))
     return findings
+
+
+def public_inputs(root: Path) -> list[Path]:
+    root = root.resolve()
+    inventory = public_archive_inventory(root)
+    return [
+        root / name
+        for name in sorted(set(inventory["files"]) | set(inventory["archive_files"]))
+        if name not in IGNORED_FILES
+        and (
+            (root / name).suffix.lower() in TEXT_SUFFIXES
+            or Path(name).name == "CMakeLists.txt"
+        )
+    ]
 
 
 def main() -> int:
@@ -144,8 +167,22 @@ def main() -> int:
     )
     parser.add_argument("--root", default=".")
     parser.add_argument("--output")
+    parser.add_argument("--inventory", type=Path)
     arguments = parser.parse_args()
-    findings = find_findings(Path(arguments.root))
+    import json
+
+    root = Path(arguments.root).resolve()
+    inventory = (
+        json.loads(arguments.inventory.read_text(encoding="utf-8"))
+        if arguments.inventory
+        else exported_inventory(root)
+    )
+    findings = find_findings(
+        root,
+        validate_inventory(root, inventory)
+        if arguments.inventory
+        else public_inputs(root),
+    )
     rendered = "\n".join(finding.format() for finding in findings)
     if arguments.output:
         output = Path(arguments.output)

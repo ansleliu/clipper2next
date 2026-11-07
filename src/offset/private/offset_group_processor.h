@@ -32,37 +32,37 @@ struct offset_path_build_result final {
     Paths64 paths;
 };
 
-struct offset_path_work_profile final {
-    std::size_t input_index{};
-    std::size_t point_count{};
-};
-
 auto append_offset_path(
     offset_state& state,
     const offset_group& group,
     std::span<const Point64> path,
     const offset_group_execution_options& options,
+    double operation_delta,
     path_set64& output) -> void;
 
 auto prepare_offset_group_state(offset_state& state,
                                 const offset_group& group,
-                                const offset_group_execution_options& options) -> void;
+                                const offset_group_execution_options& options,
+                                double operation_delta) -> void;
 
 auto build_offset_path_result(offset_state& state,
                               const offset_group& group,
                               std::span<const Point64> path,
                               const offset_group_execution_options& options,
+                              double operation_delta,
                               delta_callback_ref delta_callback) -> offset_path_build_result;
 
 auto build_offset_group_paths(offset_state& state,
                               const offset_group& group,
                               const offset_group_execution_options& options,
+                              double operation_delta,
                               delta_callback_ref delta_callback,
                               Paths64& output) -> void;
 
 auto build_offset_group_paths(offset_state& state,
                               const offset_group& group,
                               const offset_group_execution_options& options,
+                              double operation_delta,
                               delta_callback_ref delta_callback,
                               path_set64& output) -> void;
 

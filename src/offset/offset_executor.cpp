@@ -22,29 +22,27 @@ namespace {
 }  // namespace
 
 auto estimate_single_point_output_capacity(JoinType join_type,
-                                           const offset_arc_parameters& arc) noexcept -> size_t {
-    if (join_type == JoinType::Round) { return arc_step_count(arc, 2 * pi); }
+                                           const offset_arc_parameters& arc, double delta) noexcept -> size_t {
+    if (join_type == JoinType::Round) { return offset_circle_steps(arc, delta); }
     return 4;
 }
 
 auto estimate_path_output_capacity(size_t path_size,
                                    JoinType join_type,
                                    EndType end_type,
-                                   const offset_arc_parameters& arc) noexcept -> size_t {
+                                   const offset_arc_parameters& arc, double delta) noexcept -> size_t {
     if (path_size == 0) { return 0; }
-    if (path_size == 1) { return estimate_single_point_output_capacity(join_type, arc); }
+    if (path_size == 1) { return estimate_single_point_output_capacity(join_type, arc, delta); }
 
-    const auto round_steps = arc_step_count(arc, pi);
-    const auto polygon_capacity =
-        join_type == JoinType::Round ? saturating_product(path_size, round_steps)
-                                     : saturating_product(path_size, 2U);
-
+    const auto join_bound = offset_join_point_bound(join_type, arc);
+    const auto polygon_capacity = saturating_product(path_size, join_bound);
+    // Joined generates each orientation in the same path_out buffer; raw
+    // storage holds both. This function reserves the one scratch contour.
     if (end_type == EndType::Polygon || end_type == EndType::Joined) { return polygon_capacity; }
-
-    const auto path_with_caps = saturating_sum(path_size, 2U);
-    const auto open_minimum = saturating_product(path_with_caps, 2U);
-    if (join_type != JoinType::Round && end_type != EndType::Round) { return open_minimum; }
-    return std::max(open_minimum, saturating_product(path_with_caps, round_steps));
+    const auto cap_bound = end_type == EndType::Round
+        ? saturating_sum(arc_step_count(arc, pi), 1U) : std::size_t{2U};
+    return saturating_sum(saturating_product(path_size - 2U, saturating_product(join_bound, 2U)),
+                          saturating_product(cap_bound, 2U));
 }
 
 }  // namespace clipper2next::internal

@@ -183,6 +183,33 @@ def load_generated(path: Path, case_set: str) -> list[dict[str, object]]:
 
 
 class ReleaseProfileGeneratorTests(unittest.TestCase):
+    def test_derivation_changes_authority_metadata_without_changing_inputs(self) -> None:
+        self.assertTrue(hasattr(generator, "derive_authority_profiles"), "metadata-only authority derivation missing")
+        from tools.tests.check_geometry_corpus_profiles_tests import verification_record, benchmark_twin
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for profile, operation in (("triangulation", "triangulation.delaunay"), ("offset", "offset.polygon")):
+                record = verification_record(profile, operation=operation)
+                record["generator"]["version"] = 1
+                record["expected"] = {"relation": "strict-legacy-runtime"}
+                record.pop("comparison_domain")
+                record.pop("contract_id")
+                write_jsonl(root / "source" / "normalized" / "verification" / f"{profile}.jsonl", [record])
+                write_jsonl(root / "source" / "normalized" / "benchmark" / f"{profile}.jsonl", [benchmark_twin(record)])
+            source_hashes = {str(p): check.file_sha256(p) for p in (root / "source").rglob("*.jsonl")}
+            generator.derive_authority_profiles(root / "source", root / "derived")
+            self.assertEqual(source_hashes, {str(p): check.file_sha256(p) for p in (root / "source").rglob("*.jsonl")})
+            manifest = json.loads((root / "derived" / "authority-manifest.json").read_text())
+            self.assertEqual(4, len(manifest["source_files"]))
+            self.assertEqual(4, len(manifest["case_mappings"]))
+            tri = load_generated(root / "derived" / "normalized" / "verification" / "triangulation.jsonl", "verification")[0]
+            offset = load_generated(root / "derived" / "normalized" / "verification" / "offset.jsonl", "verification")[0]
+            self.assertEqual("triangulation-exact-contract", tri["expected"]["relation"])
+            self.assertEqual("strict-legacy-runtime", offset["expected"]["relation"])
+            original = load_generated(root / "source" / "normalized" / "verification" / "triangulation.jsonl", "verification")[0]
+            self.assertEqual(original["inputs"], tri["inputs"])
+            self.assertEqual(original["tolerance"], tri["tolerance"])
+
     def test_partition_is_stable_and_hash_owned(self) -> None:
         self.assertEqual("release-holdout", generator.stable_partition("shape-0"))
         self.assertEqual("development", generator.stable_partition("shape-a"))

@@ -1,18 +1,24 @@
 #include <gtest/gtest.h>
 
 #include "path_equivalence.h"
+#include "../support/offset_contract.h"
 
 #include "clipper2/clipper.h"
 #include "clipper2next/clipper.h"
 #include "../../benchmarks/oracle/benchmark_fixtures.h"
 
 #include <string>
+#include <iostream>
 
 namespace legacy = Clipper2Lib;
 namespace next = clipper2next;
 namespace oracle = clipper2next::tests::oracle;
 
 namespace {
+
+TEST(Clipper2NextDifferentialOffsetTests, AbsoluteContractsRecordBothActualEngines) {
+    EXPECT_EQ(oracle::record_offset_contract_cases(std::cout, CLIPPER2NEXT_OFFSET_CONTRACT_SOURCE), 36U);
+}
 
 TEST(Clipper2NextDifferentialOffsetTests, MixedBorrowedGroupsUseOneLegacyEquivalentCleanup) {
     const auto area = next::Paths64{{{0, 0}, {100, 0}, {100, 100}, {0, 100}}};

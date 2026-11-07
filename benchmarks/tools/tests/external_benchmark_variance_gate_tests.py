@@ -13,8 +13,11 @@ TOOLS_DIR = REPO_ROOT / "benchmarks" / "tools"
 SCRIPT = TOOLS_DIR / "gates" / "external_benchmark_variance_gate.py"
 
 
+from benchmarks.tools.tests.measurement_fixtures import complete_measurements
+
+
 def write_benchmark(path: Path, benchmarks: list[dict]) -> None:
-    path.write_text(json.dumps({"benchmarks": benchmarks}), encoding="utf-8")
+    path.write_text(json.dumps({"benchmarks": complete_measurements(benchmarks)}), encoding="utf-8")
 
 
 class ExternalBenchmarkVarianceGateTests(unittest.TestCase):

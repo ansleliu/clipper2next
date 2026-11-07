@@ -4,6 +4,8 @@
 #include "clip/engine/private/engine_scanline.h"
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <array>
 
 namespace next = clipper2next;
 
@@ -15,11 +17,31 @@ TEST(Clipper2NextEngineAelBuilderTests, AelBuilderInsertLeftEdgeMaintainsCurrent
     newcomer.current_x = 5;
     state.actives_ = &resident;
 
-    next::internal::insert_left_edge(state, newcomer);
+    next::internal::insert_left_edge(state, newcomer, nullptr);
 
     EXPECT_EQ(state.actives_, &newcomer);
     EXPECT_EQ(newcomer.next_in_ael.get(), &resident);
     EXPECT_EQ(resident.prev_in_ael.get(), &newcomer);
+
+    // Insertion order must not affect the ordered list or its reciprocal links.
+    std::array<std::size_t, 5> order{0, 1, 2, 3, 4};
+    do {
+        next::internal::clipper_base_state ordered;
+        std::array<next::internal::active_edge_node, 5> edges;
+        for (std::size_t i = 0; i < edges.size(); ++i) { edges[i].current_x = i * 10; }
+        next::internal::active_edge_node* previous_minimum = nullptr;
+        for (auto index : order) {
+            next::internal::insert_left_edge(ordered, edges[index], previous_minimum);
+            previous_minimum = &edges[index];
+        }
+        auto* edge = ordered.actives_.get();
+        for (std::size_t i = 0; i < edges.size(); ++i) {
+            ASSERT_EQ(edge, &edges[i]);
+            EXPECT_EQ(edge->prev_in_ael.get(), i ? &edges[i - 1] : nullptr);
+            edge = edge->next_in_ael.get();
+        }
+        EXPECT_EQ(edge, nullptr);
+    } while (std::next_permutation(order.begin(), order.end()));
 }
 
 TEST(Clipper2NextEngineAelBuilderTests, AelBuilderAdjustCurrXAndCopyToSelUsesAelLinks) {

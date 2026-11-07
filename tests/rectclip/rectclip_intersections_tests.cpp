@@ -54,6 +54,41 @@ TEST(Clipper2NextRectClipIntersectionsTests, SegmentIntersectionRejectsCollinear
     EXPECT_FALSE(found);
 }
 
+TEST(Clipper2NextRectClipIntersectionsTests, AxisBoundaryKeepsEndpointAndDirectionSemantics) {
+    // The same crossing in both segment directions must select the same point.
+    // Include translated coordinate limits; only comparisons are needed to
+    // classify a point against a horizontal or vertical supporting line.
+    for (const auto origin : {next::MIN_COORD + 32, int64_t{0}, next::MAX_COORD - 32}) {
+        for (const bool vertical : {false, true}) {
+            const auto point = [&](int64_t along, int64_t across) {
+                return vertical ? next::Point64{origin + across, origin + along}
+                                : next::Point64{origin + along, origin + across};
+            };
+            for (const bool reverse : {false, true}) {
+                const auto edge_start = point(reverse ? 10 : 0, 0);
+                const auto edge_end = point(reverse ? 0 : 10, 0);
+                for (const int64_t along : {-1, 0, 5, 10, 11}) {
+                    // At the coordinate limits test exact endpoint touches;
+                    // keep the established floating interpolation unchanged.
+                    const auto first = point(along, origin == 0 ? -5 : 0);
+                    const auto last = point(along, 5);
+                    for (const bool reverse_input : {false, true}) {
+                        next::Point64 intersection{77, 88};
+                        const auto found = next::internal::get_segment_intersection(
+                            reverse_input ? last : first, reverse_input ? first : last,
+                            edge_start, edge_end, intersection);
+                        EXPECT_EQ(found, along >= 0 && along <= 10);
+                        if (found) { EXPECT_EQ(intersection, point(along, 0)); }
+                    }
+                }
+                next::Point64 intersection;
+                EXPECT_FALSE(next::internal::get_segment_intersection(
+                    point(2, 0), point(8, 0), edge_start, edge_end, intersection));
+            }
+        }
+    }
+}
+
 TEST(Clipper2NextRectClipIntersectionsTests, RectIntersectionKeepsLocationWhenNotFound) {
     const next::Rect64 rect{0, 0, 10, 10};
     auto location = next::internal::rect_location::Left;

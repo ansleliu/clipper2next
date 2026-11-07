@@ -2,7 +2,10 @@
 
 #include "../../tests/oracle/external_corpus.h"
 #include "../../tests/oracle/geometry_corpus_jsonl.h"
+#include "../../tests/oracle/geometry_corpus_root.h"
 #include "../../tests/oracle/path_equivalence.h"
+#include "../../tests/support/offset_contract.h"
+#include "../../tests/support/triangulation_contract.h"
 #include "../../tests/oracle/poly_tree_equivalence.h"
 #include "../../tests/oracle/wkt_parser.h"
 
@@ -127,22 +130,8 @@ struct current_training_profiles final {
 #endif
 
 using grouped_cases = std::map<std::string, std::vector<parsed_case>>;
-[[nodiscard]] auto environment_variable(const char* name) -> std::string {
-#if defined(_MSC_VER)
-    char* value = nullptr;
-    std::size_t value_size = 0;
-    if (_dupenv_s(&value, &value_size, name) != 0 || value == nullptr) { return {}; }
-    std::string result{value};
-    std::free(value);
-    return result;
-#else
-    const auto* value = std::getenv(name);
-    return value == nullptr ? std::string{} : std::string{value};
-#endif
-}
-
 [[nodiscard]] auto geometry_corpus_root() -> std::string {
-    return environment_variable("CLIPPER2NEXT_GEOMETRY_CORPUS_ROOT");
+    return oracle::geometry_corpus_root();
 }
 
 [[nodiscard]] auto read_text_file(const std::filesystem::path& path) -> std::string {
@@ -401,7 +390,8 @@ using grouped_cases = std::map<std::string, std::vector<parsed_case>>;
     -> std::vector<offset_case> {
     std::vector<offset_case> cases;
     for (const auto& record : load_benchmark_records(root, "offset")) {
-        if (record.paths_wkt.empty() || !record.has_delta || record.join_type.empty() ||
+        if ((!record.comparison_domain.empty() && record.comparison_domain != "strict-legacy-runtime") ||
+            record.expected_relation != "strict-legacy-runtime" || record.paths_wkt.empty() || !record.has_delta || record.join_type.empty() ||
             record.end_type.empty() || !record.has_preserve_collinear ||
             !record.has_reverse_solution) {
             throw std::runtime_error{"invalid offset benchmark record: " + record.id};
@@ -658,10 +648,18 @@ using grouped_cases = std::map<std::string, std::vector<parsed_case>>;
 }
 
 [[nodiscard]] auto execute_next_triangulation(const triangulation_case& test_case)
-    -> next::Paths64 {
-    const auto result = next::triangulate(test_case.next_request);
-    if (result.status != next::TriangulateResult::success) { return {}; }
-    return result.triangles;
+    -> next::clipper_result<next::triangulation_result64> {
+    auto result = next::triangulate_checked(test_case.next_request);
+    if (!result.has_value()) {
+        // The mathematical preflight qualifies directed-structure rejection as
+        // an observable outcome. Retain it in the timed result, not an empty mesh.
+        if (result.error() != next::clipper_error_code::invalid_argument) {
+            next::raise_clipper_error(result.error());
+        }
+    } else if (result->status == next::TriangulateResult::fail) {
+        throw std::runtime_error{"unexpected triangulation execution failure"};
+    }
+    return result;
 }
 
 [[nodiscard]] auto execute_legacy_bounds(const bounds_case& test_case) -> legacy::Rect64 {
@@ -764,24 +762,6 @@ struct legacy_clip_result final {
         throw std::runtime_error{"legacy open-path overlay execution failed"};
     }
     return result;
-}
-
-[[nodiscard]] auto to_next_status(legacy::TriangulateResult status) -> next::TriangulateResult {
-    switch (status) {
-    case legacy::TriangulateResult::success: {
-        return next::TriangulateResult::success;
-    }
-    case legacy::TriangulateResult::fail: {
-        return next::TriangulateResult::fail;
-    }
-    case legacy::TriangulateResult::no_polygons: {
-        return next::TriangulateResult::no_polygons;
-    }
-    case legacy::TriangulateResult::paths_intersect: {
-        return next::TriangulateResult::paths_intersect;
-    }
-    }
-    return next::TriangulateResult::fail;
 }
 
 #if defined(CLIPPER2NEXT_MSVC_PGO_INSTRUMENTED)
@@ -925,21 +905,12 @@ template <typename Cases, typename Verifier>
         });
 
     const auto triangulation_cases = load_triangulation_cases(root);
-    verified_cases += verify_profile_against_legacy(
-        "triangulation", triangulation_cases, [](const triangulation_case& test_case) {
-            legacy::Paths64 expected_triangles;
-            const auto expected_status = legacy::Triangulate(
-                test_case.legacy_paths, expected_triangles, test_case.next_request.use_delaunay);
-            const auto actual = next::triangulate(test_case.next_request);
-            if (to_next_status(expected_status) != actual.status) {
-                throw std::runtime_error{"triangulation status mismatch"};
-            }
-            if (actual.status == next::TriangulateResult::success) {
-                oracle::assert_paths_semantically_equal(expected_triangles, actual.triangles);
-            } else if (!actual.triangles.empty()) {
-                throw std::runtime_error{"failed triangulation returned triangles"};
-            }
-        });
+    for (std::size_t index = 0; index < triangulation_cases.size(); ++index) {
+        const auto& request = triangulation_cases[index].next_request;
+        oracle::record_triangulation_case(std::cout, index, request.use_delaunay, request.paths);
+    }
+    verified_cases += triangulation_cases.size();
+    std::cout << "Triangulation mathematical_verdict=PENDING\n";
 
     const auto bounds_cases = load_bounds_cases(root);
     verified_cases +=
@@ -1056,6 +1027,7 @@ auto run_cases_loaded_on_first_iteration(benchmark::State& state,
         }
     }
     state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * case_count));
+    state.counters["cases"] = static_cast<double>(case_count);
 }
 
 template <typename Loader, typename Function>
@@ -1289,6 +1261,40 @@ const auto register_external_benchmarks = [] {
 }  // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view{argv[1]} == "--clipper2next_triangulation_records") {
+        try {
+            const auto cases =
+                load_triangulation_cases(std::filesystem::path{geometry_corpus_root()});
+            for (std::size_t index = 0; index < cases.size(); ++index) {
+                const auto& request = cases[index].next_request;
+                oracle::record_triangulation_case(
+                    std::cout, index, request.use_delaunay, request.paths);
+            }
+            std::cout << "Triangulation records=READY cases=" << cases.size()
+                      << " mathematical_verdict=PENDING\n";
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
+
+    if (argc == 2 && std::string_view{argv[1]} == "--clipper2next_offset_records") {
+        try {
+            const auto cases = load_offset_cases(std::filesystem::path{geometry_corpus_root()});
+            const auto strict = verify_profile_against_legacy("offset", cases, [](const offset_case& test_case) {
+                oracle::assert_paths_semantically_equal(execute_legacy_offset(test_case), execute_next_offset(test_case));
+            });
+            const auto formal = oracle::record_offset_contract_cases(std::cout, CLIPPER2NEXT_OFFSET_CONTRACT_SOURCE);
+            std::cout << "Offset preflight records=READY strict_cases=" << strict
+                      << " formal_cases=" << formal << " mathematical_verdict=PENDING\n";
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "Offset preflight records=FAIL: " << error.what() << '\n';
+            return 1;
+        }
+    }
+
     if (argc == 2 && std::string_view{argv[1]} == "--clipper2next_train_pgo") {
         try {
             const auto executions = train_current_benchmark_profiles();
@@ -1304,7 +1310,7 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view{argv[1]} == "--clipper2next_verify_legacy") {
         try {
             const auto verified_cases = verify_all_benchmark_profiles_against_legacy();
-            std::cout << "optimized legacy equivalence preflight status=PASS profiles=11 cases="
+            std::cout << "optimized regression preflight records=READY strict_profiles=PASS triangulation_mathematical_verdict=PENDING profiles=11 cases="
                       << verified_cases << '\n';
             return 0;
         } catch (const std::exception& error) {

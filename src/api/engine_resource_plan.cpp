@@ -63,12 +63,19 @@ auto plan_offset_generation_resources(
     const std::size_t arc_segments_per_quadrant,
     const std::size_t concurrency_limit) noexcept
     -> engine_resource_plan {
-    auto expansion = std::size_t{3U};
-    if (join_type == JoinType::Round || end_type == EndType::Round) {
-        const auto arc = make_arc_parameters(
-            delta, arc_tolerance, arc_segments_per_quadrant);
-        expansion = saturating_add(arc_step_count(arc, pi), 2U);
-    }
+    if (input_point_count == 0U) { return {}; }
+    const auto arc = join_type == JoinType::Round || end_type == EndType::Round
+        ? make_arc_parameters(delta, arc_tolerance, arc_segments_per_quadrant)
+        : offset_arc_parameters{};
+    const auto join_bound = offset_join_point_bound(join_type, arc);
+    const auto single_bound = join_type == JoinType::Round ? offset_circle_steps(arc, delta) : std::size_t{4U};
+    // Polygon has one join per vertex. Joined emits both orientations; open
+    // paths emit two interior sides and two caps (at most pi each).
+    const auto cap_bound = end_type == EndType::Round
+        ? saturating_add(arc_step_count(arc, pi), 1U) : std::size_t{2U};
+    const auto sided_bound = end_type == EndType::Polygon ? join_bound
+        : std::max(saturating_product(join_bound, 2U), cap_bound);
+    const auto expansion = std::max(single_bound, sided_bound);
     const auto point_bound =
         saturating_product(input_point_count, expansion);
     constexpr auto direct_path_scan_limit = std::size_t{512U};
@@ -83,13 +90,13 @@ auto plan_offset_generation_resources(
         saturating_add(
             saturating_product(input_path_count, input_path_count),
             direct_preparation_work));
-    const auto retained_output_bytes = saturating_product(
-        point_bound, sizeof(Point64));
+    const auto retained_output_bytes = saturating_add(saturating_product(
+        point_bound, sizeof(Point64)), saturating_product(input_path_count, 2U * sizeof(geotypes::PathDescriptor)));
     const auto per_task_scratch_bytes = saturating_add(
         sizeof(offset_state),
         saturating_add(
             saturating_product(
-                maximum_path_point_count, sizeof(PointD)),
+                maximum_path_point_count, sizeof(PointD) + 2U * sizeof(Point64)),
             saturating_product(
                 saturating_product(maximum_path_point_count, expansion),
                 sizeof(Point64))));
@@ -109,6 +116,8 @@ auto plan_offset_generation_resources(
             saturating_add(
                 retained_output_bytes, per_task_scratch_bytes)),
     };
+    plan.retained_output_bytes = retained_output_bytes;
+    plan.scratch_bytes = per_task_scratch_bytes;
     if (concurrency_limit < offset_parallel_minimum_concurrency ||
         input_path_count < offset_parallel_minimum_path_count ||
         input_point_count < offset_parallel_minimum_point_count) {
@@ -143,6 +152,8 @@ auto finalize_offset_engine_resources(
     const std::size_t output_point_count,
     const bool requires_cleanup) noexcept -> clipper_error_code {
     context.selected = context.generation;
+    context.selected.work = context.work;
+    context.selected.workspace_bytes = std::max(context.selected.workspace_bytes, context.engine_high_water);
     if (requires_cleanup) {
         const auto cleanup = plan_clip_engine_resources(output_point_count);
         auto retained_output_bytes = std::size_t{};
@@ -154,13 +165,15 @@ auto finalize_offset_engine_resources(
             return clipper_error_code::resource_limit;
         }
         context.selected.work = saturating_add(
-            context.generation.work, cleanup.work);
+            context.work, cleanup.work);
         context.selected.workspace_bytes = std::max(
-            context.generation.workspace_bytes,
+            context.selected.workspace_bytes,
             saturating_add(
                 retained_output_bytes, cleanup.workspace_bytes));
     }
-    return context.selected.work > context.maximum_work ||
+    return context.selected.work == (std::numeric_limits<std::size_t>::max)() ||
+            context.selected.workspace_bytes == (std::numeric_limits<std::size_t>::max)() ||
+            context.selected.work > context.maximum_work ||
             context.selected.workspace_bytes >
                 context.maximum_workspace_bytes
         ? clipper_error_code::resource_limit
@@ -181,18 +194,6 @@ auto measure_offset_path_storage(
         return clipper_error_code::resource_limit;
     }
     result += point_count * sizeof(Point64);
-    return clipper_error_code::ok;
-}
-
-auto add_workspace_bytes(
-    const std::size_t first,
-    const std::size_t second,
-    std::size_t& result) noexcept -> clipper_error_code {
-    const auto maximum = (std::numeric_limits<std::size_t>::max)();
-    if (second > maximum - first) {
-        return clipper_error_code::resource_limit;
-    }
-    result = first + second;
     return clipper_error_code::ok;
 }
 

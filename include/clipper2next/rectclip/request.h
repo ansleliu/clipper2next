@@ -23,12 +23,23 @@ struct rect_clip_lines_request64 final {
 
 struct prepared_rect_clip_request64 final {
     prepared_rect_clip_request64() = default;
+    prepared_rect_clip_request64(const prepared_rect_clip_request64&) = default;
+    CLIPPER2NEXT_API auto operator=(const prepared_rect_clip_request64&)
+        -> prepared_rect_clip_request64&;
+    CLIPPER2NEXT_API prepared_rect_clip_request64(prepared_rect_clip_request64&&) noexcept;
+    CLIPPER2NEXT_API auto operator=(prepared_rect_clip_request64&&) noexcept
+        -> prepared_rect_clip_request64&;
 
     [[nodiscard]] auto request() const noexcept -> const rect_clip_request64& {
         return request_;
     }
 
 private:
+    auto swap(prepared_rect_clip_request64& other) noexcept -> void;
+    auto reset() noexcept -> void;
+
+    friend CLIPPER2NEXT_API auto rect_clip_into(const prepared_rect_clip_request64& request,
+                                                rect_clip_result64& result) -> void;
     friend CLIPPER2NEXT_API auto prepare_rect_clip_request(
         rect_clip_request64 request)
         -> prepared_rect_clip_request64;
@@ -48,6 +59,9 @@ struct immutable_rect_clip_paths64 final {
 private:
     struct runtime_data;
 
+    friend CLIPPER2NEXT_API auto rect_clip_into(const Rect64& rect,
+                                                const immutable_rect_clip_paths64& paths,
+                                                rect_clip_result64& result) -> void;
     friend CLIPPER2NEXT_API auto prepare_immutable_rect_clip_paths(Paths64 paths)
         -> immutable_rect_clip_paths64;
     friend CLIPPER2NEXT_API auto rect_clip(

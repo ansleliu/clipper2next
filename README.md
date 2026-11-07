@@ -10,40 +10,28 @@ use `std::vector`, checked entry points use `std::expected`, and high-throughput
 workloads can use shared GeoTypes views, prepared requests, borrowed input
 ranges, flat path sets, and streaming topology output.
 
+## Version and compatibility
+
+This source snapshot is the **7.0.1 candidate**. Full release qualification
+remains pending.
+
+The shared library uses ABI generation 7 (SONAME 7 on Linux). The borrowed-path
+measurement callback changed since 6.x. Rebuild consumers using the matching 7.x
+headers and library. Prepared requests retain an owned snapshot of their inputs.
+
+The geometry implementation uses exact integer predicates for triangulation.
+Certified cocircular quadrilaterals preserve the selected diagonal and ordered
+triangle output. Checked Offset validates input, generated coordinates, and
+workspace limits. Rectangle clipping accepts owning requests and reusable
+prepared inputs.
+
 ## Requirements
 
 - CMake 3.24 or newer
 - Ninja
 - A C++23 compiler and standard library with `std::expected`
 
-The project is tested on Windows with MSVC and on Linux with GCC 13.
-
-Version 6.1.1 fixes single-point Round offsets whose circle cannot be represented.
-Both owning and borrowed checked entry points return `coordinate_range` instead
-of successful empty geometry. Circle sampling, rounding, and valid empty results
-retain their existing semantics.
-
-Version 6.1.0 adds checked GeoTypes coordinate conversion, integer arithmetic,
-and explicit structural validation without changing the existing point layouts
-or saturating operators. Checked offset requests reject invalid parameters and
-report generated coordinate failures instead of successful empty geometry.
-Direct offset builders report generated range failures through `clipper_error`
-and clear failed output. Valid empty results and the strict Clipper2 geometry
-equivalence contract remain unchanged.
-
-Version 6.0.0 starts a new ABI generation for borrowed offset groups. One request
-borrows all groups through completion and performs one shared generation/cleanup
-operation. The shared library uses SONAME 6; 5.x consumers must rebuild and
-migrate the former single-group request fields. No dual ABI or compatibility
-shim is shipped. The default algorithm retains the strict legacy Clipper2
-result contract.
-
-The 6.0.0 performance qualification deferred Windows variance acceptance: its
-retained measurements met the 1.2x speedup floor but were **NOISY** against the
-unchanged 5% wall-time CV gate; Linux performance qualification passed. Version
-6.1.x makes no new performance or speedup qualification claim. Geometry
-correctness, strict legacy equivalence, installation, and export-boundary gates
-remain required.
+Use MSVC on Windows or GCC 13 or newer on Linux.
 
 ## Build
 
@@ -154,10 +142,10 @@ available when the caller has already established the input contract.
 
 ## Memory and zero-copy integration
 
-Public owning path and result containers use `std::vector`; allocator ownership
-does not cross the public ABI. The `clipper2next::geotypes` component defines the
-shared point, descriptor, path-view, and topology-view contract used for direct
-interoperation with downstream geometry owners.
+Public owning path and result containers use `std::vector`. Use a compatible
+C++ runtime across the library and application. The `clipper2next::geotypes`
+component defines the shared point, descriptor, path-view, and topology-view
+contract for interoperation with downstream geometry owners.
 
 `borrow_paths64` accepts an lvalue random-access outer range whose inner ranges
 are sized and expose integral `x` and `y` members. It borrows the source
@@ -169,6 +157,9 @@ directly to caller-provided final spans. For offsetting, `offset_stage_checked`
 avoids an owning input-collection conversion and returns a `path_set64` backed
 by one point pool plus descriptors. Both APIs accept explicit path, point,
 output, and staging-workspace limits and report write/allocation statistics.
+Workspace limits account for live library-owned storage, including buffers that
+overlap during cleanup and publication. They measure logical usage rather than
+process RSS.
 
 ## Performance configuration
 
@@ -188,116 +179,30 @@ Some operations retain bounded thread-local scratch capacity. Long-lived worker
 threads may call `clipper2next::release_thread_caches()` after a geometry burst
 to release that calling thread's cached working storage.
 
-## Performance evidence
+## Tests and release verification
 
-Performance results are accepted only after exact differential comparison with
-legacy Clipper2. The final external-corpus preflight covered 11 normalized
-profiles and 2,426 cases. Integer coordinates, vertex counts, path direction,
-winding, and topology were compared without coordinate tolerance.
-
-The 5.0.1 release gates below compare the current public API with legacy
-Clipper2 on the same external benchmark profiles. Windows used MSVC 19.44 with
-`/O2 /Ob2 /DNDEBUG`; Linux used GCC 13.1 with `-O3 -DNDEBUG`. Both used Google
-Benchmark 1.9.5, seven repetitions of at least 0.5 s, pairwise process
-isolation, randomized pair order, a 1 s warmup, and a 5% CV ceiling. Every
-required default/unprepared pair must exceed 1.2x; passing the geometric mean
-alone is not sufficient. Linux is the canonical E3 result: all variance and
-speedup gates passed, with a **1.615x** 14-pair geometric mean. Two independent
-Windows runs also passed every speedup gate, but unrelated benchmarks moved
-above the CV ceiling between runs; its **1.758x** result is directional E2,
-not a variance-qualified E3 claim.
-
-| Algorithm family | Windows vs legacy | Linux vs legacy |
-| --- | ---: | ---: |
-| Generic closed overlay | **1.636x** | **1.746x** |
-| Intersection | **1.487x** | **1.584x** |
-| Union | **1.545x** | **1.669x** |
-| Difference | **1.522x** | **1.694x** |
-| XOR | **1.630x** | **1.715x** |
-| RectClip, unprepared | **1.383x** | **1.247x** |
-| Open-line RectClip, unprepared | **4.287x** | **1.790x** |
-| Open-path overlay, unprepared | **1.688x** | **1.527x** |
-| Offset, unprepared | **1.563x** | **1.770x** |
-| Triangulation, unprepared | **2.878x** | **2.340x** |
-| Minkowski, unprepared | **1.465x** | **1.454x** |
-| PolyTree, unprepared | **1.532x** | **1.434x** |
-| ClipTree, unprepared | **1.415x** | **1.456x** |
-| Batch-profile scalar calls, unprepared | **2.016x** | **1.434x** |
-
-Large offset groups use the injected executor only when the caller can supply
-16 workers and the input has at least 512 paths and 524,288 normalized points.
-On the Linux release runner, a 512-path/524,288-point end-to-end offset improved
-by **1.315x** at that admission point. Executor limits 2/4/8 stayed on the
-serial path and measured between 1.003x and 1.008x, avoiding unprofitable nested
-parallelism.
-
-These are canonical non-PGO release results. PGO is a separate artifact scope:
-it is required only when a PGO artifact is published, and that artifact must
-independently preserve the same per-pair and variance gates. PGO results never
-replace the canonical release gate.
-
-The following Windows measurements compare the final Release product with the
-pre-refactor clipper2next binary built from the same source baseline. Both used
-MSVC `/O2 /Ob2 /DNDEBUG`, Google Benchmark 1.9.5, one benchmark thread, warmup,
-fixed processor affinity, and alternating baseline/candidate order. The
-topology row is a predeclared four-affinity stratified result over 20 pairs;
-offset rows use six paired runs. Latencies are marginal medians, while the
-conclusion uses the paired geometric-mean ratio to resist frequency drift.
-
-| Algorithm and workload | Pre-refactor median | Current median | Paired result | Outcome |
-| --- | ---: | ---: | ---: | ---: |
-| Borrowed topology union, 256 subject groups | 1.358 ms | 1.278 ms | -3.71% latency; 15/20 pairs faster | **1.039x faster** |
-| Polygon offset, miter join, 64 paths | 246.021 us | 243.521 us | +0.08% latency | parity |
-| Polygon offset, round join, 64 paths | 701.653 us | 373.114 us | -46.43% latency; 6/6 pairs faster | **1.867x faster** |
-
-The direct topology writer also removes an intermediate point-copy pass. For
-the 256-group workload, the pre-refactor sink wrote 2,048 points to ring
-scratch and then 2,048 points to final storage. The current writer performs the
-same 2,048 final writes with zero ring-scratch point writes, eliminating 32 KiB
-of intermediate point-write traffic per operation because `Point64` is 16
-bytes. Both variants recorded zero input-collection writes and zero steady-state
-staging reallocations.
-
-| Topology write counter, 256 groups | Pre-refactor | Current |
-| --- | ---: | ---: |
-| Input-collection point writes | 0 | 0 |
-| Engine-input point writes | 2,048 | 2,048 |
-| Intermediate ring-scratch point writes | 2,048 | 0 |
-| Final point writes | 2,048 | 2,048 |
-| Steady-state staging reallocations | 0 | 0 |
-
-These are workload-specific controlled measurements, not universal latency or
-RSS claims. Standalone process RSS was not isolated for this clipper2next
-comparison, so no memory-capacity number is invented. Raw JSON remains outside
-Git by policy.
-
-## Testing
-
-MSVC Debug products and ordinary tests retain their default checked-iterator
-ABI. Only the global-allocation OOM probe and its noninstalled static test
-implementation use `_ITERATOR_DEBUG_LEVEL=0`: MSVC's iterator-proxy allocation
-inside `noexcept` STL constructors otherwise terminates before an exception
-can reach the library boundary. The probe qualifies recoverable storage
-allocation failures, not recovery from that Debug-runtime termination.
-Legacy geometry comparisons continue to use the normal product Debug ABI.
-
-The product test suite uses GoogleTest. Differential oracle tests compare
-observable results with Clipper2 and remain isolated from the installed
-production target. Google Benchmark, sanitizer, ThreadSanitizer, fuzz-smoke, and
-install-consumer configurations are provided by the repository presets.
-
-Oracle tests use the bounded normalized corpus stored in the repository by
-default. A larger normalized corpus can override it through
-`CLIPPER2NEXT_GEOMETRY_CORPUS_ROOT`:
+The product tests use GoogleTest. Oracle configurations compare geometry with
+Clipper2 and use the checked-in normalized profiles together with the original
+legacy text corpus. Point CMake at the legacy geometry parent directory at
+configure time:
 
 ```sh
-CLIPPER2NEXT_GEOMETRY_CORPUS_ROOT=/path/to/geometry \
-  ctest --preset linux-gcc-oracle --output-on-failure
+cmake --preset linux-gcc-oracle \
+  -DCLIPPER2NEXT_LEGACY_CORPUS_SOURCE_ROOT=/path/to/geometry
+cmake --build --preset linux-gcc-oracle
+ctest --preset linux-gcc-oracle --output-on-failure
 ```
 
-Corpus tests are therefore exercised rather than skipped in a default source
-build. Release evidence additionally rejects any required corpus test reported
-as skipped.
+Triangulation is verified for exact coverage, constraints, non-overlap, and
+local Delaunay legality where requested. Predeclared Offset corrections use
+independent expected geometry. Other comparison domains use strict legacy
+equivalence. See [the test guide](tests/README.md) and the
+[public triangulation benchmark guide](benchmarks/public_triangulation/README.md).
+
+The repository presets cover product, oracle, sanitizer, fuzz-smoke, and
+benchmark configurations. Release qualification binds checks and measurements
+to the selected source and binaries. Keep generated reports and raw results
+in an ignored output directory such as `build/release-evidence`.
 
 ## License
 

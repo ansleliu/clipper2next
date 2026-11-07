@@ -280,7 +280,7 @@ class ReleasePerformanceSuiteTests(unittest.TestCase):
         self.assertFalse(called)
         self.assertIn("PGO instrumentation", stderr.getvalue())
 
-    def test_product_compare_log_classifies_noise_band_without_blocking(self) -> None:
+    def test_product_compare_failure_is_blocking_even_inside_historical_noise_band(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             compare_log = Path(temp_dir) / "compare.log"
             compare_log.write_text(
@@ -292,11 +292,10 @@ class ReleasePerformanceSuiteTests(unittest.TestCase):
             status, release_blocking, failures = suite.classify_product_compare_log(
                 compare_log,
                 max_regression_percent=10.0,
-                noise_regression_percent=20.0,
             )
 
-        self.assertEqual(status, "NOISY")
-        self.assertFalse(release_blocking)
+        self.assertEqual(status, "FAIL")
+        self.assertTrue(release_blocking)
         self.assertEqual(failures, ["BM_product_offset_miter/64"])
 
     def test_product_compare_log_blocks_above_noise_band(self) -> None:
@@ -311,7 +310,6 @@ class ReleasePerformanceSuiteTests(unittest.TestCase):
             status, release_blocking, failures = suite.classify_product_compare_log(
                 compare_log,
                 max_regression_percent=10.0,
-                noise_regression_percent=20.0,
             )
 
         self.assertEqual(status, "FAIL")

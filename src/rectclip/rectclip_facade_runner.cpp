@@ -1,7 +1,5 @@
 #include "rectclip/private/rectclip_facade_runner.h"
 
-#include "clipper2next/api/memory.h"
-#include "clipper2next/geometry.h"
 #include "rectclip/private/rectclip_context.h"
 #include "rectclip/private/rectclip_edges.h"
 #include "rectclip/private/rectclip_execution_context.h"
@@ -9,194 +7,116 @@
 #include "rectclip/private/rectclip_path_builder.h"
 #include "rectclip/private/rectclip_path_bounds.h"
 #include "rectclip/private/rectclip_polygon_executor.h"
-#include "rectclip/private/rectclip_thread_state.h"
 
+#include "support/private/paths_rebuild.h"
+#include <algorithm>
+#include <cassert>
 #include <cstddef>
-#include <optional>
 #include <span>
 #include <utility>
 
 namespace clipper2next::internal {
 namespace {
 
-[[nodiscard]] auto copy_paths(const Paths64& paths) -> Paths64 {
-    Paths64 result;
-    result.reserve(paths.size());
-    for (const auto& path : paths) {
-        Path64 copied_path;
-        copied_path.reserve(path.size());
-        copied_path.insert(copied_path.end(), path.begin(), path.end());
-        result.emplace_back(std::move(copied_path));
-    }
-    return result;
-}
-
-[[nodiscard]] auto copy_line_paths(const Paths64& paths) -> Paths64 {
-    Paths64 result;
-    result.reserve(paths.size());
-    for (const auto& path : paths) {
-        Path64 copied_path;
-        copied_path.reserve(path.size());
-        for (const auto& point : path) {
-            if (!copied_path.empty() && copied_path.back() == point) { continue; }
-            copied_path.emplace_back(point);
-        }
-        if (copied_path.size() >= 2U) { result.emplace_back(std::move(copied_path)); }
-    }
-    return result;
-}
-
-[[nodiscard]] auto copy_contained_paths(const Paths64& paths,
-                                        rectclip_mode mode) -> Paths64 {
-    return mode == rectclip_mode::polygons ? copy_paths(paths)
-                                           : copy_line_paths(paths);
-}
-
-[[nodiscard]] auto execute_polygon_clip(rectclip_context& context,
-                                        const Paths64& paths,
-                                        std::span<const Rect64> precomputed_bounds) -> Paths64 {
-    Paths64 result;
-    result.reserve(paths.size());
+template <typename BoundsAt>
+auto build_rectclip_polygon_paths(rectclip_context& context,
+                               const Paths64& paths,
+                               BoundsAt bounds_at) -> Paths64 {
+    const auto& rect = context.rect;
+    if (rect.is_empty()) { return {}; }
+    Paths64 output;
+    output.reserve(paths.size());
+    rectclip_execution_context execution{context};
     rectclip_polygon_executor executor{context};
-    rectclip_execution_context execution_context{context};
-    const bool use_precomputed_bounds = rectclip_has_precomputed_bounds(paths, precomputed_bounds);
-
-    for (std::size_t index = 0; index < paths.size(); ++index) {
-        const auto& path = paths[index];
-        if (path.size() < 3) { continue; }
-
-        context.path_bounds = use_precomputed_bounds ? precomputed_bounds[index] : bounds(path);
-        if (!context.rect.intersects(context.path_bounds)) { continue; }
-        if (context.rect.contains(context.path_bounds)) {
-            result.emplace_back(path);
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        const auto& path = paths[i];
+        if (path.size() < 3U) { continue; }
+        bounds_at(i, path, context.path_bounds);
+        if (!rect.intersects(context.path_bounds)) { continue; }
+        if (rect.contains(context.path_bounds)) {
+            output.push_back(path);
             continue;
         }
-
-        executor.execute_path(execution_context, path);
-        check_edges(context.results, context.edges, context.rect);
-        for (std::size_t edge_index = 0; edge_index < 4; ++edge_index) {
-            tidy_edges(edge_index,
-                       context.edges[edge_index * 2],
-                       context.edges[edge_index * 2 + 1],
-                       context.results);
+        executor.execute_path(execution, path);
+        auto needs_cleanup = check_edges(context.results, context.edges, context.rect);
+        for (std::size_t edge = 0; edge < 4; ++edge) {
+            needs_cleanup |= tidy_edges(
+                edge, context.edges[edge * 2], context.edges[edge * 2 + 1], context.results);
         }
-
-        for (auto& output_ref : context.results) {
-            auto* output_node = output_ref.get();
-            auto output_path = build_polygon_path(output_node);
-            output_ref = output_node;
-            if (!output_path.empty()) { result.emplace_back(std::move(output_path)); }
+        for (auto ref : context.results) {
+            auto* node = ref.get();
+            // An unchanged checked ring already has no collinear corners.
+            // Link edits invalidate that proof and keep the established pass.
+            if (needs_cleanup) { prepare_polygon_path(node); }
+            if (node) { append_materialized_rectclip_path(node, output); }
         }
-
         context.reset_polygon_storage();
     }
-
-    return result;
-}
-
-[[nodiscard]] auto execute_line_clip(rectclip_context& context,
-                                     const Paths64& paths,
-                                     std::span<const Rect64> precomputed_bounds) -> Paths64 {
-    Paths64 result;
-    result.reserve(paths.size());
-    rectclip_line_executor executor{context};
-    rectclip_execution_context execution_context{context};
-    const bool use_precomputed_bounds = rectclip_has_precomputed_bounds(paths, precomputed_bounds);
-
-    for (std::size_t index = 0; index < paths.size(); ++index) {
-        const auto& path = paths[index];
-        if (path.size() < 2U) { continue; }
-        const auto path_bounds = use_precomputed_bounds ? precomputed_bounds[index] : bounds(path);
-        if (!context.rect.intersects(path_bounds)) { continue; }
-
-        executor.execute_path(execution_context, path);
-        for (auto& output_ref : context.results) {
-            auto* output_node = output_ref.get();
-            auto output_path = build_line_path(output_node);
-            output_ref = output_node;
-            if (!output_path.empty()) { result.emplace_back(std::move(output_path)); }
-        }
-
-        context.reset_line_storage();
-    }
-
-    return result;
+    return output;
 }
 
 }  // namespace
 
-auto execute_rectclip(const Rect64& rect,
-                      const Paths64& paths,
-                      rectclip_mode mode) -> Paths64 {
-    return execute_rectclip(rect, paths, rectclip_path_bounds_view{}, mode);
+// Each generated contour belongs to the private result before publication.
+auto build_rectclip_paths(rectclip_context& context,
+                          const Paths64& paths,
+                          std::span<const Rect64> precomputed_bounds,
+                          rectclip_mode mode) -> Paths64 {
+    assert(precomputed_bounds.size() == paths.size());
+    if (mode != rectclip_mode::polygons) {
+        return build_rectclip_line_paths(context.rect, paths, precomputed_bounds);
+    }
+    const auto bounds_at = [precomputed_bounds](std::size_t index, const Path64&, Rect64& bounds) {
+        bounds = precomputed_bounds[index];
+    };
+    return build_rectclip_polygon_paths(context, paths, bounds_at);
 }
 
-auto execute_rectclip(const Rect64& rect,
-                      const Paths64& paths,
-                      std::span<const Rect64> path_bounds,
-                      rectclip_mode mode) -> Paths64 {
-    rectclip_path_bounds_view bounds_view;
-    if (rectclip_has_precomputed_bounds(paths, path_bounds)) {
-        bounds_view = rectclip_path_bounds_view{
-            path_bounds,
-            summarize_rectclip_path_bounds(paths, path_bounds),
-        };
+auto build_rectclip_line_paths(const Rect64 rect, const Paths64& paths,
+                               std::span<const Rect64> precomputed_bounds) -> Paths64 {
+    assert(precomputed_bounds.size() == paths.size());
+    if (rect.is_empty()) { return {}; }
+    Paths64 output;
+    output.reserve(paths.size());
+    rectclip_line_executor executor{rect};
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        const auto& path = paths[i];
+        if (path.size() < 2U) { continue; }
+        const auto& bounds = precomputed_bounds[i];
+        if (!rect.intersects(bounds)) { continue; }
+        if (rectclip_rect_strictly_contains_bounds(rect, bounds)) {
+            auto& line = output.emplace_back(path);
+            line.erase(std::unique(line.begin(), line.end()), line.end());
+            if (line.size() < 2U) { output.pop_back(); }
+        } else { executor.execute_path(output, path); }
     }
-    return execute_rectclip(rect, paths, bounds_view, mode);
+    return output;
 }
 
-auto execute_rectclip(const Rect64& rect,
-                      const Paths64& paths,
-                      const rectclip_path_bounds_view& path_bounds,
-                      rectclip_mode mode) -> Paths64 {
-    Paths64 result;
-    if (rect.is_empty()) { return result; }
-    const bool use_precomputed_bounds = rectclip_has_precomputed_bounds(paths, path_bounds.bounds);
-    if (paths.size() == 1U) {
-        const auto minimum_size = mode == rectclip_mode::polygons ? 3U : 2U;
-        if (paths.front().size() >= minimum_size) {
-            const auto single_bounds =
-                use_precomputed_bounds ? path_bounds.bounds.front() : bounds(paths.front());
-            if (!rect.intersects(single_bounds)) { return result; }
-            if (rectclip_rect_contains_bounds(rect, single_bounds, mode)) {
-                return copy_contained_paths(paths, mode);
-            }
-        }
-    }
-    if (use_precomputed_bounds && path_bounds.summary.has_bounds) {
-        const bool all_paths_have_minimum_size =
-            mode == rectclip_mode::polygons
-                ? path_bounds.summary.all_paths_have_polygon_minimum_size
-                : path_bounds.summary.all_paths_have_line_minimum_size;
-        if (all_paths_have_minimum_size &&
-            rectclip_rect_contains_bounds(rect, path_bounds.summary.combined_bounds, mode)) {
-            return copy_contained_paths(paths, mode);
-        }
-    } else if (!paths.empty()) {
-        const auto minimum_size = mode == rectclip_mode::polygons ? 3U : 2U;
-        Rect64 combined_bounds;
-        if (rectclip_paths_have_minimum_size(paths, minimum_size) &&
-            rectclip_paths_bounds_unchecked(paths, combined_bounds) &&
-            rectclip_rect_contains_bounds(rect, combined_bounds, mode)) {
-            return copy_contained_paths(paths, mode);
-        }
-    }
-
-    auto& context = acquire_reusable_rectclip_context(rect);
-    switch (mode) {
-    case rectclip_mode::polygons: {
-        return execute_polygon_clip(context, paths, path_bounds.bounds);
-    }
-    case rectclip_mode::lines: {
-        return execute_line_clip(context, paths, path_bounds.bounds);
-    }
-    }
-
-    return result;
+auto build_rectclip_unprepared_polygon_paths(rectclip_context& context,
+                                            const Paths64& paths) -> Paths64 {
+    return build_rectclip_polygon_paths(
+        context, paths, [](std::size_t, const Path64& path, Rect64& bounds) {
+            static_cast<void>(rectclip_path_bounds(path, false, bounds));
+        });
 }
 
-auto copy_rectclip_paths(const Paths64& paths) -> Paths64 {
-    return copy_paths(paths);
+auto execute_rectclip_into(rectclip_context& context,
+                           const Paths64& paths,
+                           std::span<const Rect64> precomputed_bounds,
+                           rectclip_mode mode,
+                           Paths64& destination) -> void {
+    auto completed = build_rectclip_paths(context, paths, precomputed_bounds, mode);
+    // All input has been consumed. Preserve existing path buffers and the
+    // established prepare/begin/failure contract at the supplied-output boundary.
+    materialize_paths(std::move(completed), destination);
+}
+
+auto execute_rectclip_lines_into(const Rect64 rect, const Paths64& paths,
+                                 std::span<const Rect64> precomputed_bounds,
+                                 Paths64& destination) -> void {
+    auto completed = build_rectclip_line_paths(rect, paths, precomputed_bounds);
+    materialize_paths(std::move(completed), destination);
 }
 
 }  // namespace clipper2next::internal

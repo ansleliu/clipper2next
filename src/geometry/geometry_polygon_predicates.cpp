@@ -1,6 +1,7 @@
 #include "geometry/private/geometry_predicates.h"
 
 #include <algorithm>
+#include <type_traits>
 
 namespace clipper2next {
 namespace {
@@ -18,13 +19,20 @@ template <typename T>
     auto inside = false;
     auto previous = polygon.back();
     for (const auto& current : polygon) {
+        if constexpr (std::is_integral_v<T>) {
+            // A disjoint vertical interval precludes both contact and a ray crossing.
+            if (!polygon_between_closed(point.y, previous.y, current.y)) {
+                previous = current;
+                continue;
+            }
+        }
         // One exact orientation drives both the on-edge test and the rightward-ray
         // crossing test. For Point64 this is an int128 cross-product sign, so the
         // edge requires no long double division, which silently misclassified
         // points once coordinate products exceeded 2^53.
         const auto orientation = cross_product_sign(previous, current, point);
         if (orientation == 0 && polygon_between_closed(point.x, previous.x, current.x) &&
-            polygon_between_closed(point.y, previous.y, current.y)) {
+            (std::is_integral_v<T> || polygon_between_closed(point.y, previous.y, current.y))) {
             return PointInPolygonResult::IsOn;
         }
 

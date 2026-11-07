@@ -13,6 +13,7 @@ from benchmarks.tools.common.release_gate_policy import (
     EXTERNAL_CORE_TIME_FIELD,
     coefficient_of_variation_percent,
 )
+from benchmarks.tools.common.external_core_measurement import load_median_records
 
 
 DEFAULT_UNPREPARED_MODE = "default-unprepared"
@@ -34,46 +35,7 @@ def load_records_from_payload(
     payload: dict, time_field: str = EXTERNAL_CORE_TIME_FIELD
 ) -> dict[str, dict[str, float | str]]:
 
-    benchmarks = payload.get("benchmarks")
-    if not isinstance(benchmarks, list):
-        raise ValueError("benchmark JSON has no benchmark list")
-
-    records: dict[str, dict[str, float | str]] = {}
-    means: dict[str, float] = {}
-    cvs: dict[str, float] = {}
-
-    for benchmark in benchmarks:
-        name = benchmark.get("name")
-        if not isinstance(name, str):
-            continue
-        if benchmark.get("run_type") == "aggregate" and name.endswith("_cv"):
-            cvs[name.removesuffix("_cv")] = coefficient_of_variation_percent(benchmark, time_field)
-            continue
-        measured_time = benchmark.get(time_field)
-        if not isinstance(measured_time, int | float):
-            continue
-
-        time_value = float(measured_time)
-        run_type = benchmark.get("run_type", "iteration")
-        if run_type == "iteration":
-            if name.endswith("_median") or name.endswith("_mean") or name.endswith("_cv"):
-                continue
-            records[name] = {"time": time_value, "source": name}
-            continue
-
-        if run_type != "aggregate":
-            continue
-        if name.endswith("_median"):
-            base_name = name.removesuffix("_median")
-            records[base_name] = {"time": time_value, "source": name}
-        elif name.endswith("_mean"):
-            means[name.removesuffix("_mean")] = time_value
-
-    for name, measured_time in means.items():
-        records.setdefault(name, {"time": measured_time, "source": f"{name}_mean"})
-    for name, cv_percent in cvs.items():
-        records.setdefault(name, {})["cv"] = cv_percent
-    return records
+    return load_median_records(payload, time_field=time_field)
 
 
 def default_speedup_pair_candidates(legacy_name: str) -> list[tuple[str, str]]:
@@ -405,6 +367,11 @@ def main() -> int:
         records = load_records(Path(args.candidate), time_field=args.time_field)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(str(error), file=sys.stderr)
+        write_reports(output_md=args.output_md, output_json=args.output_json,
+                      mode=args.mode, status="FAIL", min_pair_speedup=args.min_pair_speedup,
+                      min_geomean_speedup=args.min_geomean_speedup, geomean=None,
+                      require_pair_floor=not args.allow_slower_pairs, time_field=args.time_field,
+                      rows=[], missing=[], skipped=[], reason=str(error))
         return 1
 
     if args.require_core_pairs:

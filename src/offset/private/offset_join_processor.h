@@ -13,8 +13,8 @@ struct offset_join_options final {
     JoinType join_type{JoinType::Bevel};
     double arc_tolerance{0.0};
     std::size_t arc_segments_per_quadrant{};
-    geotypes::CoordinateRounding coordinate_rounding{
-        geotypes::CoordinateRounding::NearestEven};
+    offset_point_rounding coordinate_rounding{};
+    scoped_workspace_growth* output_growth{};
 };
 
 auto append_offset_join(offset_state& state,

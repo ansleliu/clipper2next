@@ -22,42 +22,16 @@ namespace clipper2next::internal {
 #define CLIPPER2NEXT_ENGINE_FORCE_INLINE inline
 #endif
 
-[[nodiscard]] CLIPPER2NEXT_ENGINE_FORCE_INLINE auto round_to_even_int64_in_clipper_range(
+[[nodiscard]] CLIPPER2NEXT_ENGINE_FORCE_INLINE auto round_to_int64_in_clipper_range(
     double value) noexcept -> int64_t {
 #if defined(__AVX2__) || defined(_M_AVX2)
     const auto rounded = _mm_round_sd(
-        _mm_setzero_pd(), _mm_set_sd(value), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        _mm_setzero_pd(), _mm_set_sd(value), _MM_FROUND_CUR_DIRECTION | _MM_FROUND_NO_EXC);
     return _mm_cvttsd_si64(rounded);
 #elif defined(_MSC_VER) && (defined(_M_AMD64) || defined(_M_X64))
     return _mm_cvtsd_si64(_mm_set_sd(value));
-#elif defined(__clang__)
-#if __has_builtin(__builtin_elementwise_roundeven)
-    return static_cast<int64_t>(__builtin_elementwise_roundeven(value));
-#elif __has_builtin(__builtin_roundeven)
-    return static_cast<int64_t>(__builtin_roundeven(value));
 #else
-    auto integer = static_cast<int64_t>(value);
-    const auto fraction = value - static_cast<double>(integer);
-    const auto is_odd = (integer & int64_t{1}) != 0;
-    if (fraction > 0.5 || (fraction == 0.5 && is_odd)) {
-        ++integer;
-    } else if (fraction < -0.5 || (fraction == -0.5 && is_odd)) {
-        --integer;
-    }
-    return integer;
-#endif
-#elif defined(__GNUC__)
-    return static_cast<int64_t>(__builtin_roundeven(value));
-#else
-    auto integer = static_cast<int64_t>(value);
-    const auto fraction = value - static_cast<double>(integer);
-    const auto is_odd = (integer & int64_t{1}) != 0;
-    if (fraction > 0.5 || (fraction == 0.5 && is_odd)) {
-        ++integer;
-    } else if (fraction < -0.5 || (fraction == -0.5 && is_odd)) {
-        --integer;
-    }
-    return integer;
+    return static_cast<int64_t>(std::nearbyint(value));
 #endif
 }
 
@@ -75,7 +49,7 @@ namespace clipper2next::internal {
     }
     if (current_y == edge.bottom.y) { return edge.bottom.x; }
     return edge.bottom.x +
-           round_to_even_int64_in_clipper_range(
+           round_to_int64_in_clipper_range(
                edge.dx * static_cast<double>(current_y - edge.bottom.y));
 }
 

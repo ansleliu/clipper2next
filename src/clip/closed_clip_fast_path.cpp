@@ -1,4 +1,5 @@
 #include "clip/private/closed_clip_fast_path.h"
+#include "clip/private/closed_clip_rectangle_operations.h"
 
 #include "clipper2next/core/rect.h"
 #include "clip/private/clip_request_metadata.h"
@@ -15,18 +16,6 @@ namespace clipper2next::internal {
 [[nodiscard]] auto try_execute_disjoint_bounds_intersection(
     const clip_request64& request, const clip_request_metadata64& metadata, paths64_result& result)
     -> bool;
-[[nodiscard]] auto try_execute_two_rectangle_intersection(const clip_request64& request,
-                                                          const clip_request_metadata64& metadata,
-                                                          paths64_result& result) -> bool;
-[[nodiscard]] auto try_execute_two_rectangle_union(const clip_request64& request,
-                                                   const clip_request_metadata64& metadata,
-                                                   paths64_result& result) -> bool;
-[[nodiscard]] auto try_execute_two_rectangle_difference(const clip_request64& request,
-                                                        const clip_request_metadata64& metadata,
-                                                        paths64_result& result) -> bool;
-[[nodiscard]] auto try_execute_two_rectangle_xor(const clip_request64& request,
-                                                 const clip_request_metadata64& metadata,
-                                                 paths64_result& result) -> bool;
 
 namespace {
 
@@ -46,17 +35,36 @@ namespace {
            fill_rule_is_orientation_insensitive(request.fill_rule);
 }
 
+[[nodiscard]] auto has_rectangle_pair(const clip_request_metadata64& metadata) noexcept -> bool {
+    return metadata.subject_path_count == 1U && metadata.clip_path_count == 1U &&
+           metadata.single_subject_rect.has_value() && metadata.single_clip_rect.has_value();
+}
+
 [[nodiscard]] auto try_execute_closed_clip_fast_path_impl(const clip_request64& request,
                                                           const clip_request_metadata64& metadata,
                                                           paths64_result& result) -> bool {
     if (metadata.open_subject_path_count != 0U) { return false; }
     if (!closed_clip_fast_path_options_are_eligible(request)) { return false; }
 
+    if (has_rectangle_pair(metadata)) {
+        const auto& subject = *metadata.single_subject_rect;
+        const auto& clip = *metadata.single_clip_rect;
+        switch (request.clip_type) {
+        case ClipType::Intersection:
+            execute_two_rectangle_intersection(subject, clip, result);
+            return true;
+        case ClipType::Union:
+            return try_execute_two_rectangle_union(subject, clip, result);
+        case ClipType::Difference:
+            return try_execute_two_rectangle_difference(subject, clip, result);
+        case ClipType::Xor:
+            return try_execute_two_rectangle_xor(subject, clip, result);
+        default:
+            return false;
+        }
+    }
+    if (request.clip_type != ClipType::Intersection) { return false; }
     if (try_execute_containing_rectangle_intersection(request, metadata, result)) { return true; }
-    if (try_execute_two_rectangle_intersection(request, metadata, result)) { return true; }
-    if (try_execute_two_rectangle_union(request, metadata, result)) { return true; }
-    if (try_execute_two_rectangle_xor(request, metadata, result)) { return true; }
-    if (try_execute_two_rectangle_difference(request, metadata, result)) { return true; }
     return try_execute_disjoint_bounds_intersection(request, metadata, result);
 }
 
@@ -76,19 +84,8 @@ auto is_likely_closed_clip_fast_path_candidate(const clip_request64& request,
                metadata.single_clip_rect.has_value() &&
                point_count_within_threshold;
     }
-    if (request.clip_type == ClipType::Union) {
-        return metadata.subject_path_count == 1U && metadata.clip_path_count == 1U &&
-               metadata.single_subject_rect.has_value() && metadata.single_clip_rect.has_value();
-    }
-    if (request.clip_type == ClipType::Difference) {
-        return metadata.subject_path_count == 1U && metadata.clip_path_count == 1U &&
-               metadata.single_subject_rect.has_value() && metadata.single_clip_rect.has_value();
-    }
-    if (request.clip_type == ClipType::Xor) {
-        return metadata.subject_path_count == 1U && metadata.clip_path_count == 1U &&
-               metadata.single_subject_rect.has_value() && metadata.single_clip_rect.has_value();
-    }
-    return false;
+    return (request.clip_type == ClipType::Union || request.clip_type == ClipType::Difference ||
+            request.clip_type == ClipType::Xor) && has_rectangle_pair(metadata);
 }
 
 auto try_execute_closed_clip_fast_path(const clip_request64& request, paths64_result& result)

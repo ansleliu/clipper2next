@@ -31,16 +31,24 @@ struct borrowed_paths64_access final {
         const borrowed_paths64& paths,
         std::size_t path_index,
         path_source_contract::borrowed_path_measurement64& result,
+        std::size_t maximum_source_point_count,
         const bool allow_open = false) noexcept -> clipper_error_code {
         if (paths.flat_kind_ != borrowed_paths64::flat_descriptor_kind::none) {
             const auto source = flat_path(paths, path_index, allow_open);
             if (!source) { return source.error(); }
             result = {};
             result.source_point_count = source->size();
+            if (result.source_point_count > maximum_source_point_count) {
+                return clipper_error_code::resource_limit;
+            }
             geotypes::Point2i64 first{};
             geotypes::Point2i64 last{};
             auto has_point = false;
             for (const auto point : *source) {
+                if (point.x < MIN_COORD || point.x > MAX_COORD ||
+                    point.y < MIN_COORD || point.y > MAX_COORD) {
+                    return clipper_error_code::coordinate_range;
+                }
                 if (has_point && point == last) { continue; }
                 if (!has_point) {
                     first = point;
@@ -55,7 +63,7 @@ struct borrowed_paths64_access final {
             return clipper_error_code::ok;
         }
         if (!is_bound(paths)) { return clipper_error_code::input_changed; }
-        return paths.measure_path_(paths.source_, path_index, result);
+        return paths.measure_path_(paths.source_, path_index, result, maximum_source_point_count);
     }
 
     [[nodiscard]] static auto copy_path(const borrowed_paths64& paths,

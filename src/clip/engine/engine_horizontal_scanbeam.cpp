@@ -1,6 +1,7 @@
 #include "clip/engine/private/engine_scanbeam_orchestrator.h"
 
 #include "clip/engine/private/engine_active_list.h"
+#include "clip/engine/private/engine_lifecycle.h"
 #include "clip/engine/private/engine_horizontal.h"
 #include "clip/engine/private/engine_output.h"
 #include "clip/engine/private/engine_output_topology.h"
@@ -56,7 +57,7 @@ auto close_open_horizontal(clipper_base_state& state, active_edge_node& horizont
         }
         horizontal.outrec = nullptr;
     }
-    remove_from_ael(horizontal, state.actives_);
+    retire_active_edge(state, horizontal);
 }
 
 }  // namespace
@@ -106,8 +107,8 @@ auto do_horizontal(clipper_base_state& state,
                             state, *edge, horizontal, horizontal.top_point, succeeded);
                     }
                 }
-                remove_from_ael(*edge, state.actives_);
-                remove_from_ael(horizontal, state.actives_);
+                retire_active_edge(state, *edge);
+                retire_active_edge(state, horizontal);
                 return;
             }
 

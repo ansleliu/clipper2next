@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,7 @@ SOURCE_SUFFIXES = {".h", ".hpp", ".cpp", ".cc", ".cxx"}
 ORACLE_PATH_PARTS = ("tests/oracle/", "benchmarks/oracle/")
 IGNORED_SOURCE_DIR_PARTS = {
     ".git",
+    ".superpowers",
     "__pycache__",
     "build",
     "out",
@@ -91,9 +93,15 @@ def scan_source(path: Path, root: Path) -> list[Finding]:
     return findings
 
 
-def is_ignored_generated_path(path: Path, root: Path) -> bool:
-    relative_parts = path.relative_to(root).parts
-    return any(part in IGNORED_SOURCE_DIR_PARTS for part in relative_parts)
+def source_files(root: Path):
+    for directory, subdirectories, filenames in os.walk(root):
+        subdirectories[:] = [
+            name for name in subdirectories if name not in IGNORED_SOURCE_DIR_PARTS
+        ]
+        for filename in filenames:
+            path = Path(directory) / filename
+            if path.suffix in SOURCE_SUFFIXES and path.is_file():
+                yield path
 
 
 def find_default_oracle_dependencies(root: Path) -> list[Finding]:
@@ -102,11 +110,8 @@ def find_default_oracle_dependencies(root: Path) -> list[Finding]:
     for cmake_path in (root / "CMakeLists.txt", root / "tests" / "CMakeLists.txt", root / "benchmarks" / "CMakeLists.txt"):
         if cmake_path.exists():
             findings.extend(scan_cmake(cmake_path, root))
-    for path in sorted(root.rglob("*")):
-        if is_ignored_generated_path(path, root):
-            continue
-        if path.is_file() and path.suffix in SOURCE_SUFFIXES:
-            findings.extend(scan_source(path, root))
+    for path in sorted(source_files(root)):
+        findings.extend(scan_source(path, root))
     return sorted(findings, key=lambda finding: (finding.path, finding.line, finding.category))
 
 

@@ -134,7 +134,7 @@ TEST(Clipper2NextEngineHorizontalTests, ConvertHorizontalSegmentsCreatesOpposing
 
     next::internal::HorzSegmentList segments{next::internal::horizontal_segment_node{*first_right},
                                              next::internal::horizontal_segment_node{*second_left}};
-    std::vector<next::internal::horizontal_join_node> joins;
+    next::internal::engine_buffer<next::internal::horizontal_join_node> joins;
 
     next::internal::convert_horizontal_segments_to_joins(segments, joins);
 
@@ -165,7 +165,7 @@ TEST(Clipper2NextEngineHorizontalTests, ProcessHorizontalJoinsLinksDistinctOutpu
     second_b.prev = &second_a;
     second_owner.pts = &second_a;
 
-    std::vector<next::internal::horizontal_join_node> joins{
+    next::internal::engine_buffer<next::internal::horizontal_join_node> joins{
         next::internal::horizontal_join_node{first_a, second_a}};
     next::internal::engine_output_owner output_owner;
 

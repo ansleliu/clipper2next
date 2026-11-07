@@ -252,8 +252,13 @@ def stage_center_recipe(
             newline="\n",
         )
     common_test_package = project_root / "packaging" / "test_package"
-    for name in ("CMakeLists.txt", "conanfile.py", "main.cpp"):
+    for name in ("CMakeLists.txt", "conanfile.py", "main.cpp", "correction_contract.h", "correction_contract.cpp"):
         shutil.copy2(common_test_package / name, test_package / name)
+    from tools.checks.check_public_release_information import find_findings
+    findings = find_findings(stage, [p for p in stage.rglob("*") if p.is_file()])
+    if findings:
+        raise ValueError("staged public recipe contains private information: " +
+                         "; ".join(finding.format() for finding in findings))
     return stage
 
 
@@ -394,18 +399,40 @@ def internal_create_command(
     configuration: str,
     system_name: str,
     user: str,
+    profile: Path | None = None,
+    output_json: Path | None = None,
 ) -> list[str]:
     internal_reference(identity, configuration, user)
-    return [
+    command = [
         "conan",
         "create",
         str(root.resolve()),
         f"--user={user}",
         f"--channel={configuration.lower()}",
         f"--test-folder={(root / 'packaging' / 'test_package').resolve()}",
-        "--build=missing",
+        "--build=clipper2next/*",
+        "--no-remote",
         *conan_settings(configuration, system_name),
     ]
+    if (profile is None) != (output_json is None):
+        raise ValueError(
+            "qualification package production requires both profile and output JSON"
+        )
+    if profile is not None:
+        command += [
+            "-pr:h",
+            str(profile.resolve()),
+            "-pr:b",
+            str(profile.resolve()),
+            "--format=json",
+            "--out-file=" + str(output_json.resolve()),
+            "-c",
+            "tools.cmake.cmake_layout:test_folder="
+            + str(output_json.resolve().parent / "conan-test"),
+            "-c",
+            "tools.cmake.cmake_layout:build_folder_vars=[]",
+        ]
+    return command
 
 
 def center_create_command(

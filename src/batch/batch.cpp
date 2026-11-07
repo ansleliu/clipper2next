@@ -8,16 +8,14 @@
 
 namespace {
 
-[[nodiscard]] auto clip_batch_item(
-    const clipper2next::clip_request64& request)
-    -> clipper2next::paths64_result {
-    return clipper2next::internal::execute_clip_with_fast_path(request);
+auto clip_batch_item_into(const clipper2next::clip_request64& request,
+                          clipper2next::paths64_result& result) -> void {
+    clipper2next::internal::execute_clip_into_with_fast_path(request, result);
 }
 
-[[nodiscard]] auto clip_batch_item(
-    const clipper2next::prepared_clip_request64& request)
-    -> clipper2next::paths64_result {
-    return clipper2next::clip(request);
+auto clip_batch_item_into(const clipper2next::prepared_clip_request64& request,
+                          clipper2next::paths64_result& result) -> void {
+    clipper2next::clip_into(request, result);
 }
 
 template <typename Request>
@@ -27,7 +25,7 @@ template <typename Request>
     auto results = std::vector<clipper2next::paths64_result>{};
     results.reserve(requests.size());
     for (const auto& request : requests) {
-        results.push_back(clip_batch_item(request));
+        clip_batch_item_into(request, results.emplace_back());
     }
     return results;
 }

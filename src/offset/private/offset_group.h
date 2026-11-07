@@ -3,6 +3,7 @@
 #include "clipper2next/geometry.h"
 #include "clipper2next/offset/types.h"
 #include "offset/private/offset_geometry.h"
+#include "geometry/private/integer_area_sign.h"
 
 #include <limits>
 #include <memory_resource>
@@ -108,17 +109,17 @@ struct offset_group final {
                                     (std::numeric_limits<std::int64_t>::min)()};
         for (std::size_t path_index = 0; path_index < path_count(); ++path_index) {
             const auto candidate = path(path_index);
-            auto path_area = MAX_DBL;
+            auto path_sign = std::optional<int>{};
             for (const auto& point : candidate) {
                 if ((point.y < bottom_point.y) ||
                     ((point.y == bottom_point.y) && (point.x >= bottom_point.x))) {
                     continue;
                 }
-                if (path_area == MAX_DBL) {
-                    path_area = area(candidate);
-                    if (path_area == 0.0) { break; }
-                    lowest_info.has_negative_area = path_area < 0.0;
+                if (!path_sign.has_value()) {
+                    path_sign = signed_area_sign(candidate);
+                    if (*path_sign == 0) { break; }
                 }
+                lowest_info.has_negative_area = *path_sign < 0;
                 lowest_info.path_index = path_index;
                 bottom_point = point;
             }

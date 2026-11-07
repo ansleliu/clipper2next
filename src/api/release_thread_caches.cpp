@@ -4,7 +4,7 @@
 #include "clip/private/borrowed_topology_access.h"
 #include "offset/private/offset_thread_state.h"
 #include "rectclip/private/rectclip_thread_state.h"
-#include "triangulation/private/triangulation_executor.h"
+#include "triangulation/private/triangulation_operation.h"
 
 namespace clipper2next {
 

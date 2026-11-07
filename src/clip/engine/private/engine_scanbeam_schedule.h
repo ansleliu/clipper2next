@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace clipper2next::internal {
@@ -22,22 +23,27 @@ struct global_scanbeam_schedule_result final {
     active_edge_node& head,
     int64_t top_y,
     active_edge_node_ref& sorted_edges,
-    std::vector<active_edge_node*>& top_edges)
+    engine_buffer<active_edge_node*>& top_edges)
     -> global_scanbeam_schedule_result;
 
 [[nodiscard]] auto prepare_global_scanbeam_schedule(
     active_edge_node& head,
     int64_t top_y,
     active_edge_node_ref& sorted_edges,
-    std::vector<active_edge_node*>& top_edges,
+    engine_buffer<active_edge_node*>& top_edges,
     scanbeam_schedule_mode schedule_mode)
     -> global_scanbeam_schedule_result;
 
 [[nodiscard]] auto prepare_contiguous_unit_scanbeam_schedule(
     active_edge_node& head,
     int64_t top_y,
-    std::vector<active_edge_node*>& active_edges,
-    std::vector<active_edge_node*>& top_edges)
+    engine_buffer<active_edge_node*>& active_edges,
+    engine_buffer<active_edge_node*>& top_edges)
     -> global_scanbeam_schedule_result;
+
+auto restore_contiguous_scanbeam_coordinates(
+    int64_t top_y,
+    std::span<active_edge_node* const> active_edges,
+    engine_buffer<active_edge_node*>& top_edges) -> void;
 
 }  // namespace clipper2next::internal

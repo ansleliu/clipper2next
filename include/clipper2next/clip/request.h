@@ -34,6 +34,10 @@ struct clip_request_metadata64 final {
 
 struct prepared_clip_request64 final {
     prepared_clip_request64() = default;
+    prepared_clip_request64(const prepared_clip_request64&) = default;
+    CLIPPER2NEXT_API auto operator=(const prepared_clip_request64&) -> prepared_clip_request64&;
+    CLIPPER2NEXT_API prepared_clip_request64(prepared_clip_request64&&) noexcept;
+    CLIPPER2NEXT_API auto operator=(prepared_clip_request64&&) noexcept -> prepared_clip_request64&;
 
     [[nodiscard]] auto request() const noexcept -> const clip_request64& { return request_; }
     [[nodiscard]] auto metadata() const noexcept -> const clip_request_metadata64& {
@@ -43,10 +47,15 @@ struct prepared_clip_request64 final {
 private:
     struct runtime_data;
 
+    auto swap(prepared_clip_request64& other) noexcept -> void;
+    auto reset() noexcept -> void;
+
     friend CLIPPER2NEXT_API auto prepare_clip_request(clip_request64 request)
         -> prepared_clip_request64;
     friend CLIPPER2NEXT_API auto clip(const prepared_clip_request64& request)
         -> paths64_result;
+    friend CLIPPER2NEXT_API auto clip_into(const prepared_clip_request64& request,
+                                           paths64_result& result) -> void;
     friend CLIPPER2NEXT_API auto clip_checked(const prepared_clip_request64& request)
         -> expected_paths64_result;
 

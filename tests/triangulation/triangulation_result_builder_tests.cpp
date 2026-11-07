@@ -17,7 +17,11 @@ TEST(Clipper2NextTriangulationResultBuilderTests, NormalizesTriangleOrientation)
     auto* triangle =
         next::internal::create_triangulation_triangle(context, first_edge, second_edge, third_edge);
 
-    const auto result = next::internal::build_triangulation_result(context);
+    for (auto* side : {first_edge, second_edge, third_edge}) {
+        side->kind = next::internal::triangulation_edge_kind::ascend;
+        side->triA = triangle;
+    }
+    const auto result = next::internal::build_triangulation_result(next::internal::validate_triangulation_mesh(context, clipper2next::internal::prepare_triangulation_predicate_domain(context)));
 
     ASSERT_NE(triangle, nullptr);
     ASSERT_EQ(result.size(), 1U);

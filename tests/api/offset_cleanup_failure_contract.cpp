@@ -1,96 +1,22 @@
 #include "clipper2next/offset.h"
 #include "clipper2next/core/path_set_builder.h"
+#include "support/allocation_failure_probe.h"
 
-#include <atomic>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <new>
 
-#if defined(_MSC_VER)
-static_assert(_ITERATOR_DEBUG_LEVEL == 0,
-              "Global OOM injection must not target noexcept checked-iterator proxy allocations");
-#endif
-
 namespace {
-
-std::atomic<std::ptrdiff_t> allocationsBeforeFailure{-1};
 std::ptrdiff_t activeOrdinal{-1};
 const char* activePhase = "setup";
-
-[[nodiscard]] auto shouldFailAllocation() noexcept -> bool {
-    auto remaining = allocationsBeforeFailure.load(std::memory_order_relaxed);
-    while (remaining >= 0) {
-        if (allocationsBeforeFailure.compare_exchange_weak(
-                remaining, remaining - 1, std::memory_order_relaxed, std::memory_order_relaxed)) {
-            return remaining == 0;
-        }
-    }
-    return false;
-}
-
-class ScopedAllocationFailure final {
-public:
-    explicit ScopedAllocationFailure(const std::ptrdiff_t successfulAllocations) noexcept {
-        allocationsBeforeFailure.store(successfulAllocations, std::memory_order_relaxed);
-    }
-
-    ScopedAllocationFailure(const ScopedAllocationFailure&) = delete;
-    auto operator=(const ScopedAllocationFailure&) -> ScopedAllocationFailure& = delete;
-
-    ~ScopedAllocationFailure() { allocationsBeforeFailure.store(-1, std::memory_order_relaxed); }
-};
-
+using clipper2next::tests::ScopedAllocationFailure;
 }  // namespace
-
-void* operator new(const std::size_t size) {
-    if (shouldFailAllocation()) { throw std::bad_alloc{}; }
-    if (auto* const result = std::malloc(size); result != nullptr) { return result; }
-    throw std::bad_alloc{};
-}
-
-void* operator new[](const std::size_t size) {
-    return ::operator new(size);
-}
-
-void* operator new(const std::size_t size, const std::nothrow_t&) noexcept {
-    if (shouldFailAllocation()) { return nullptr; }
-    return std::malloc(size);
-}
-
-void* operator new[](const std::size_t size, const std::nothrow_t& tag) noexcept {
-    return ::operator new(size, tag);
-}
-
-void operator delete(void* const pointer) noexcept {
-    std::free(pointer);
-}
-
-void operator delete[](void* const pointer) noexcept {
-    ::operator delete(pointer);
-}
-
-void operator delete(void* const pointer, std::size_t) noexcept {
-    ::operator delete(pointer);
-}
-
-void operator delete[](void* const pointer, std::size_t) noexcept {
-    ::operator delete(pointer);
-}
-
-void operator delete(void* const pointer, const std::nothrow_t&) noexcept {
-    std::free(pointer);
-}
-
-void operator delete[](void* const pointer, const std::nothrow_t& tag) noexcept {
-    ::operator delete(pointer, tag);
-}
-
 int main() {
     std::set_terminate([] {
         std::fprintf(stderr, "terminated: ordinal=%td phase=%s remaining=%td\n",
-                     activeOrdinal, activePhase, allocationsBeforeFailure.load());
+                     activeOrdinal, activePhase, clipper2next::tests::allocations_before_failure());
         if (const auto failure = std::current_exception()) {
             try { std::rethrow_exception(failure); }
             catch (const std::exception& error) { std::fprintf(stderr, "%s\n", error.what()); }

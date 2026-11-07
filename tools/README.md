@@ -5,6 +5,7 @@
 - `corpus/`: external corpus fetch/profile utilities.
 - `compare/`: general comparison utilities.
 - `runners/`: orchestration scripts that call other tools.
+- `release/`: source, corpus, and binary provenance for release verification.
 - `tests/`: Python unit tests for the tools.
 
 Keep executable scripts in the topic directory that owns the behavior. The

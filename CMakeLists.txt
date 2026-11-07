@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(clipper2next VERSION 6.1.1 LANGUAGES CXX)
+project(clipper2next VERSION 7.0.1 LANGUAGES CXX)
 
 if(NOT CMAKE_GENERATOR STREQUAL "Ninja")
   message(FATAL_ERROR
@@ -181,8 +181,11 @@ target_sources(clipper2next
     src/api/requests_topology_execute.cpp
     src/api/requests_topology_input.cpp
     src/api/requests_topology_output.cpp
+    src/api/requests_topology_writer.cpp
+    src/api/requests_flat_output.cpp
     src/api/requests_topology_state.cpp
     src/api/request_metadata.cpp
+    src/clip/owning_clip_state.cpp
     src/api/requests.cpp
     src/api/requests_offset.cpp
     src/api/requests_offset_entry.cpp
@@ -229,6 +232,7 @@ target_sources(clipper2next
     src/clip/engine/engine_scanbeam_orchestrator.cpp
     src/clip/engine/engine_scanbeam_orchestrator_helpers.cpp
     src/clip/engine/engine_scanbeam_processor.cpp
+    src/clip/engine/engine_scanbeam_execution.cpp
     src/clip/engine/engine_scanbeam_schedule.cpp
     src/clip/engine/engine_scanbeam_services.cpp
     src/clip/engine/engine_scanline.cpp
@@ -248,15 +252,15 @@ target_sources(clipper2next
     src/offset/offset_algorithm_flat.cpp
     src/offset/offset_builder.cpp
     src/offset/offset_direct_guards.cpp
-    src/offset/offset_execution_context.cpp
     src/offset/offset_executor.cpp
     src/offset/offset_fast_path.cpp
     src/offset/offset_group_parallel.cpp
+    src/offset/offset_single_point.cpp
     src/offset/offset_group_processor.cpp
+    src/geometry/integer_area_sign.cpp
     src/offset/offset_group_state.cpp
     src/offset/offset_join_processor.cpp
     src/offset/offset_open_path_processor.cpp
-    src/offset/offset_path_processor.cpp
     src/offset/offset_thread_state.cpp
     src/polygon/polygon_tree.cpp
     src/rectclip/rectclip_thread_state.cpp
@@ -274,16 +278,23 @@ target_sources(clipper2next
     src/rectclip/rectclip_polygon_executor.cpp
     src/rectclip/rectclip_traversal.cpp
     src/rectclip/rectclip_unprepared_runner.cpp
+    src/support/parallel_workspace_observer.cpp
     src/triangulation/triangulation.cpp
     src/triangulation/triangulation_cache.cpp
+    src/triangulation/triangulation_boundary_events.cpp
     src/triangulation/triangulation_boundary.cpp
     src/triangulation/triangulation_context.cpp
+    src/triangulation/triangulation_mesh.cpp
+    src/triangulation/triangulation_simple.cpp
+    src/triangulation/triangulation_monotone.cpp
+    src/triangulation/triangulation_partition.cpp
     src/triangulation/triangulation_delaunay.cpp
     src/triangulation/triangulation_edge_graph.cpp
     src/triangulation/triangulation_executor.cpp
-    src/triangulation/triangulation_graph.cpp
+    src/triangulation/triangulation_operation.cpp
     src/triangulation/triangulation_graph_repair.cpp
     src/triangulation/triangulation_intersections.cpp
+    src/triangulation/triangulation_exact_predicates.cpp
     src/triangulation/triangulation_legalizer.cpp
     src/triangulation/triangulation_path_builder.cpp
     src/triangulation/triangulation_result_builder.cpp
@@ -347,9 +358,10 @@ target_sources(clipper2next
     TYPE HEADERS
     BASE_DIRS src
     FILES
+      src/api/private/request_execution_helpers.h
       src/api/private/borrowed_topology_pipeline.h
       src/api/private/borrowed_offset_execution.h
-      src/api/private/offset_request_validation.h
+      src/offset/private/offset_request_validation.h
       src/support/private/engine_resource_plan.h
       src/batch/private/batch_clip_executor.h
       src/clip/engine/private/engine_active_list.h
@@ -384,28 +396,30 @@ target_sources(clipper2next
       src/clip/private/borrowed_topology_access.h
       src/clip/private/closed_clip_fast_path.h
       src/clip/private/closed_clip_rectangle_operations.h
+      src/clip/private/owning_clip_state.h
       src/clip/private/clip_execution_strategy.h
       src/clip/private/clip_request_metadata.h
       src/clip/private/clip_request_validation.h
       src/clip/private/prepared_clip_runtime_data.h
+      src/geometry/private/integer_area_sign.h
       src/geometry/private/geometry_exact.h
       src/geometry/private/geometry_predicates.h
       src/geometry/private/numeric_policy.h
       src/geometry/private/path_simplicity.h
+      src/geometry/private/rectangle_certificate.h
       src/geometry/private/scalar_helpers.h
       src/minkowski/private/minkowski.h
       src/offset/private/offset_algorithm.h
       src/offset/private/offset_algorithm_support.h
-      src/offset/private/offset_execution_context.h
       src/offset/private/offset_executor.h
       src/offset/private/offset_fast_path.h
       src/offset/private/offset_geometry.h
       src/offset/private/offset_group.h
+      src/offset/private/offset_single_point.h
       src/offset/private/offset_group_processor.h
       src/offset/private/offset_join_processor.h
       src/offset/private/offset_open_path_processor.h
       src/offset/private/offset_output.h
-      src/offset/private/offset_path_processor.h
       src/offset/private/offset_state.h
       src/offset/private/offset_thread_state.h
       src/rectclip/private/rectclip_path_bounds.h
@@ -424,28 +438,46 @@ target_sources(clipper2next
       src/rectclip/private/rectclip_unprepared_runner.h
       src/rectclip/private/rectclip_unprepared_bounds.h
       src/support/private/checked_size.h
+      src/support/private/parallel_workspace_observer.h
       src/support/private/bulk_execution.h
       src/support/private/scoped_nearest_rounding.h
       src/support/private/union_component_grouping.h
+      src/support/private/storage/stable_block_storage.h
       src/support/private/storage/stable_pool.h
       src/support/private/storage/topology_store.h
+      src/triangulation/private/triangulation_boundary_events.h
       src/triangulation/private/triangulation_boundary.h
       src/triangulation/private/triangulation_cache.h
       src/triangulation/private/triangulation_context.h
+      src/triangulation/private/triangulation_exact_predicates.h
       src/triangulation/private/triangulation_delaunay.h
       src/triangulation/private/triangulation_edge_graph.h
       src/triangulation/private/triangulation_executor.h
-      src/triangulation/private/triangulation_graph.h
+      src/triangulation/private/triangulation_operation.h
       src/triangulation/private/triangulation_graph_repair.h
       src/triangulation/private/triangulation_intersections.h
       src/triangulation/private/triangulation_legalizer.h
       src/triangulation/private/triangulation_path_builder.h
       src/triangulation/private/triangulation_result_builder.h
-      src/triangulation/private/triangulation_sweep.h
       src/triangulation/private/triangulation_sweep_line.h
       src/triangulation/private/triangulation_sweep_triangulators.h
       src/triangulation/private/triangulation_topology.h
       src/triangulation/private/triangulation_types.h
+      src/geometry/private/geometry_segment_query.h
+      src/triangulation/private/triangulation_boundary_geometry.h
+      src/triangulation/private/triangulation_boundary_sector.h
+      src/triangulation/private/triangulation_catalog.h
+      src/triangulation/private/triangulation_coordinate_identity.h
+      src/triangulation/private/triangulation_incident_edges.h
+      src/triangulation/private/triangulation_mesh.h
+      src/triangulation/private/triangulation_monotone.h
+      src/triangulation/private/triangulation_monotone_graph.h
+      src/triangulation/private/triangulation_partition.h
+      src/triangulation/private/triangulation_partition_status.h
+      src/triangulation/private/triangulation_simple.h
+      src/triangulation/private/triangulation_source_segment.h
+      src/triangulation/private/triangulation_sweep_diagonal.h
+      src/triangulation/private/triangulation_sweep_front.h
 )
 
 target_include_directories(clipper2next
@@ -481,6 +513,10 @@ endif()
 clipper2next_target_warnings(clipper2next)
 clipper2next_target_sanitizers(clipper2next)
 clipper2next_target_msvc_external_pgo(clipper2next LIBRARY)
+
+if(CLIPPER2NEXT_BUILD_ORACLE AND (CLIPPER2NEXT_TESTS OR CLIPPER2NEXT_BENCHMARKS))
+  include(cmake/Clipper2NextCorpusInputs.cmake)
+endif()
 
 if(CLIPPER2NEXT_TESTS)
   enable_testing()

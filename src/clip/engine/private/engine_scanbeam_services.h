@@ -37,9 +37,9 @@ private:
     bool* succeeded_;
     engine_intersection_services* intersection_services_;
     std::optional<int64_t> current_x_adjusted_top_y_;
-    std::vector<active_edge_node*>& top_edges_at_current_y_;
-    std::vector<active_edge_node*>& contiguous_unit_edges_;
-    std::vector<active_edge_node*>& contiguous_unit_scratch_;
+    engine_buffer<active_edge_node*>& top_edges_at_current_y_;
+    engine_buffer<active_edge_node*>& contiguous_unit_edges_;
+    engine_buffer<active_edge_node*>& contiguous_unit_scratch_;
 };
 
 }  // namespace clipper2next::internal

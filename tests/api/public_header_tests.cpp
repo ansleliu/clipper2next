@@ -39,6 +39,7 @@
 #include "clipper2next/version.h"
 
 #include <gtest/gtest.h>
+#include <cstdio>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -73,6 +74,45 @@ static_assert(sizeof(next::borrowed_paths64) == 9U * sizeof(void*));
 static_assert(sizeof(next::topology_writer64) == 5U * sizeof(void*));
 static_assert(std::is_same_v<next::Path64, std::vector<next::Point64>>);
 static_assert(std::is_same_v<next::Paths64, std::vector<next::Path64>>);
+
+namespace {
+struct clip_snapshot_layout final {
+    next::clip_request64 request{};
+    next::clip_request_metadata64 metadata{};
+    std::shared_ptr<const void> runtime{};
+};
+struct rect_snapshot_layout final {
+    next::rect_clip_request64 request{};
+    std::vector<next::Rect64> bounds{};
+};
+static_assert(sizeof(next::prepared_clip_request64) == sizeof(clip_snapshot_layout));
+static_assert(alignof(next::prepared_clip_request64) == alignof(clip_snapshot_layout));
+static_assert(sizeof(next::prepared_rect_clip_request64) == sizeof(rect_snapshot_layout));
+static_assert(alignof(next::prepared_rect_clip_request64) == alignof(rect_snapshot_layout));
+static_assert(sizeof(next::immutable_rect_clip_paths64) == sizeof(std::shared_ptr<const void>));
+static_assert(alignof(next::immutable_rect_clip_paths64) == alignof(std::shared_ptr<const void>));
+}  // namespace
+
+TEST(Clipper2NextPublicHeaderTests, PreparedLayoutAndSpecialMemberTraits) {
+    std::printf("prepared clip size=%zu align=%zu rect size=%zu align=%zu\n",
+                sizeof(next::prepared_clip_request64), alignof(next::prepared_clip_request64),
+                sizeof(next::prepared_rect_clip_request64),
+                alignof(next::prepared_rect_clip_request64));
+    std::printf("immutable rect size=%zu align=%zu\n", sizeof(next::immutable_rect_clip_paths64),
+                alignof(next::immutable_rect_clip_paths64));
+    EXPECT_TRUE(std::is_copy_constructible_v<next::prepared_clip_request64>);
+    EXPECT_TRUE(std::is_copy_assignable_v<next::prepared_clip_request64>);
+    EXPECT_TRUE(std::is_nothrow_move_constructible_v<next::prepared_clip_request64>);
+    EXPECT_TRUE(std::is_nothrow_move_assignable_v<next::prepared_clip_request64>);
+    EXPECT_TRUE(std::is_copy_constructible_v<next::prepared_rect_clip_request64>);
+    EXPECT_TRUE(std::is_copy_assignable_v<next::prepared_rect_clip_request64>);
+    EXPECT_TRUE(std::is_nothrow_move_constructible_v<next::prepared_rect_clip_request64>);
+    EXPECT_TRUE(std::is_nothrow_move_assignable_v<next::prepared_rect_clip_request64>);
+    EXPECT_TRUE(std::is_copy_constructible_v<next::immutable_rect_clip_paths64>);
+    EXPECT_TRUE(std::is_copy_assignable_v<next::immutable_rect_clip_paths64>);
+    EXPECT_TRUE(std::is_nothrow_move_constructible_v<next::immutable_rect_clip_paths64>);
+    EXPECT_TRUE(std::is_nothrow_move_assignable_v<next::immutable_rect_clip_paths64>);
+}
 
 TEST(Clipper2NextPublicHeaderTests, UmbrellaHeadersExposeExpectedTypes) {
     next::Paths64 paths;

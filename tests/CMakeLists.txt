@@ -104,9 +104,16 @@ clipper2next_add_python_gate(strict_oracle_equivalence
 clipper2next_add_python_gate(external_legacy_oracles
   tools/checks/check_external_verification_legacy_oracles.py
   --root "${PROJECT_SOURCE_DIR}")
-clipper2next_add_python_gate(vendored_geometry_profiles
-  tools/checks/check_geometry_corpus_profiles.py
-  "${PROJECT_SOURCE_DIR}/tests/oracle/corpus/geometry")
+if(CLIPPER2NEXT_BUILD_ORACLE)
+  clipper2next_add_python_gate(vendored_geometry_profiles
+    tools/release/prepare_correction_corpus.py
+    --check-selection "${corpus_selection_path}" --selection-sha256 "${corpus_selection_sha256}")
+else()
+  clipper2next_add_python_gate(vendored_geometry_profiles
+    tools/release/prepare_correction_corpus.py
+    --source "${PROJECT_SOURCE_DIR}/tests/oracle/corpus/geometry"
+    --output-dir "${clipper2next_gate_output_dir}/vendored-corpus")
+endif()
 
 add_test(NAME clipper2next_gate_conan_publication_contract
   COMMAND "${Python3_EXECUTABLE}" -m unittest
@@ -150,6 +157,55 @@ function(clipper2next_add_internal_test_support target)
 endfunction()
 
 clipper2next_add_internal_test_support(clipper2next_internal_test_support)
+
+add_executable(clipper2next_triangulation_phase_probe triangulation/triangulation_phase_probe.cpp)
+target_link_libraries(clipper2next_triangulation_phase_probe PRIVATE clipper2next_internal_test_support)
+target_include_directories(clipper2next_triangulation_phase_probe PRIVATE
+  ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(clipper2next_triangulation_phase_probe PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY)
+clipper2next_target_warnings(clipper2next_triangulation_phase_probe)
+clipper2next_target_sanitizers(clipper2next_triangulation_phase_probe)
+
+foreach(contract IN ITEMS status graph)
+  if(contract STREQUAL "status")
+    set(partition_source triangulation/triangulation_partition_status_contract.cpp)
+  else()
+    set(partition_source triangulation/triangulation_partition_contract.cpp)
+  endif()
+  set(partition_target clipper2next_triangulation_partition_${contract}_contract)
+  add_executable(${partition_target} ${partition_source})
+  target_link_libraries(${partition_target} PRIVATE clipper2next_internal_test_support)
+  target_include_directories(${partition_target} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(${partition_target} PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY)
+  clipper2next_target_warnings(${partition_target})
+  clipper2next_target_sanitizers(${partition_target})
+  add_test(NAME ${partition_target} COMMAND ${partition_target})
+endforeach()
+
+add_executable(clipper2next_triangulation_coordinate_identity_contract
+  triangulation/triangulation_coordinate_identity_contract.cpp)
+target_link_libraries(clipper2next_triangulation_coordinate_identity_contract PRIVATE
+  clipper2next_internal_test_support)
+target_include_directories(clipper2next_triangulation_coordinate_identity_contract PRIVATE
+  ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(clipper2next_triangulation_coordinate_identity_contract PRIVATE
+  CLIPPER2NEXT_BUILDING_LIBRARY)
+clipper2next_target_warnings(clipper2next_triangulation_coordinate_identity_contract)
+clipper2next_target_sanitizers(clipper2next_triangulation_coordinate_identity_contract)
+add_test(NAME clipper2next_triangulation_coordinate_identity_contract
+  COMMAND clipper2next_triangulation_coordinate_identity_contract)
+
+add_executable(clipper2next_exact_contract_probe triangulation/exact_contract_probe.cpp)
+target_link_libraries(clipper2next_exact_contract_probe PRIVATE clipper2next_internal_test_support)
+target_include_directories(clipper2next_exact_contract_probe PRIVATE
+  ${PROJECT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(clipper2next_exact_contract_probe PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY)
+clipper2next_target_warnings(clipper2next_exact_contract_probe)
+clipper2next_target_sanitizers(clipper2next_exact_contract_probe)
+add_test(NAME clipper2next_exact_predicate_oracle
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/triangulation/exact_predicate_oracle.py"
+    --probe "$<TARGET_FILE:clipper2next_exact_contract_probe>")
+
 
 foreach(clipper2next_gtest_target IN ITEMS gtest gtest_main)
   if(TARGET ${clipper2next_gtest_target})
@@ -199,6 +255,7 @@ set(clipper2next_clip_test_sources
 )
 
 set(clipper2next_clip_engine_test_sources
+  clip_engine/engine_buffer_tests.cpp
   clip_engine/engine_active_list_tests.cpp
   clip_engine/engine_ael_builder_tests.cpp
   clip_engine/engine_fill_rule_tests.cpp
@@ -237,14 +294,13 @@ set(clipper2next_fixture_test_sources
 
 set(clipper2next_offset_test_sources
   offset/offset_builder_tests.cpp
-  offset/offset_execution_tests.cpp
   offset/offset_fast_path_tests.cpp
   offset/offset_geometry_tests.cpp
   offset/offset_group_tests.cpp
   offset/offset_join_processor_tests.cpp
   offset/offset_output_tests.cpp
   offset/offset_state_tests.cpp
-  oracle/offset_backend_equivalence_tests.cpp
+  oracle/offset_facade_integration_tests.cpp
 )
 
 set(clipper2next_rectclip_test_sources
@@ -257,16 +313,36 @@ set(clipper2next_rectclip_test_sources
 
 set(clipper2next_triangulation_test_sources
   triangulation/triangulation_boundary_tests.cpp
+  triangulation/triangulation_catalog_tests.cpp
+  triangulation/triangulation_segment_query_tests.cpp
   triangulation/triangulation_context_tests.cpp
+  triangulation/triangulation_mesh_tests.cpp
+  triangulation/triangulation_simple_tests.cpp
   triangulation/triangulation_delaunay_tests.cpp
   triangulation/triangulation_edge_graph_tests.cpp
   triangulation/triangulation_executor_tests.cpp
-  triangulation/triangulation_graph_tests.cpp
   triangulation/triangulation_intersections_tests.cpp
   triangulation/triangulation_legalizer_tests.cpp
+  triangulation/triangulation_sweep_front_tests.cpp
+  triangulation/triangulation_sweep_diagonal_tests.cpp
+  triangulation/triangulation_boundary_sector_tests.cpp
+  triangulation/triangulation_source_segment_tests.cpp
+  triangulation/exact_distance_query_tests.cpp
+  triangulation/triangulation_predicate_domain_tests.cpp
+  triangulation/oriented_in_circle_tests.cpp
   triangulation/triangulation_path_builder_tests.cpp
   triangulation/triangulation_result_builder_tests.cpp
   triangulation/triangulation_sweep_line_tests.cpp
+  triangulation/triangulation_active_endpoint_tests.cpp
+  triangulation/triangulation_incident_storage_tests.cpp
+  triangulation/triangulation_complete_query_tests.cpp
+  triangulation/triangulation_graph_orientation_tests.cpp
+  triangulation/triangulation_catalog_pair_tests.cpp
+  triangulation/triangulation_convex_initialization_tests.cpp
+  triangulation/triangulation_monotone_projection_tests.cpp
+  triangulation/triangulation_monotone_workspace_tests.cpp
+  triangulation/triangulation_preparation_contract_tests.cpp
+  triangulation/triangulation_source_contact_facts_tests.cpp
   triangulation/triangulation_types_tests.cpp
 )
 
@@ -307,48 +383,82 @@ clipper2next_target_msvc_external_pgo(clipper2next_tests CORRECTNESS)
 
 gtest_discover_tests(clipper2next_tests)
 
+# This TU compiles the production owning implementation to observe its existing
+# private TLS state. Its definitions satisfy the support archive's owning symbols.
+add_executable(clipper2next_owning_clip_empty_phase_contract
+  api/owning_clip_empty_phase_contract.cpp)
+target_link_libraries(clipper2next_owning_clip_empty_phase_contract PRIVATE
+  clipper2next_internal_test_support ${clipper2next_gtest_libs})
+target_include_directories(clipper2next_owning_clip_empty_phase_contract PRIVATE
+  ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(clipper2next_owning_clip_empty_phase_contract PRIVATE
+  CLIPPER2NEXT_BUILDING_LIBRARY)
+clipper2next_target_warnings(clipper2next_owning_clip_empty_phase_contract)
+clipper2next_target_sanitizers(clipper2next_owning_clip_empty_phase_contract)
+gtest_discover_tests(clipper2next_owning_clip_empty_phase_contract)
+
+add_executable(clipper2next_triangulation_failure_contract api/triangulation_failure_contract.cpp)
+add_executable(clipper2next_triangulation_partition_failure_contract
+  api/triangulation_partition_failure_contract.cpp)
+foreach(triangulation_failure_target IN ITEMS
+    clipper2next_triangulation_failure_contract
+    clipper2next_triangulation_partition_failure_contract)
+  target_link_libraries(${triangulation_failure_target} PRIVATE clipper2next_internal_test_support)
+  target_include_directories(${triangulation_failure_target} PRIVATE ${PROJECT_SOURCE_DIR}/src)
+  target_compile_definitions(${triangulation_failure_target} PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY)
+  clipper2next_target_warnings(${triangulation_failure_target})
+  clipper2next_target_sanitizers(${triangulation_failure_target})
+  add_test(NAME ${triangulation_failure_target} COMMAND ${triangulation_failure_target})
+endforeach()
+
 add_executable(
   clipper2next_offset_cleanup_failure_contract
   api/offset_cleanup_failure_contract.cpp
+  support/allocation_failure_probe.cpp
 )
+add_executable(clipper2next_prepared_failure_contract
+  api/prepared_failure_contract.cpp
+  support/allocation_failure_probe.cpp)
+add_executable(clipper2next_checked_failure_contract
+  api/checked_failure_contract.cpp
+  support/engine_execution_override.cpp
+  support/allocation_failure_probe.cpp)
+target_include_directories(clipper2next_checked_failure_contract PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_executable(clipper2next_direct_materialization_contract
+  api/direct_materialization_contract.cpp support/allocation_failure_probe.cpp)
+target_include_directories(clipper2next_direct_materialization_contract PRIVATE ${PROJECT_SOURCE_DIR}/src)
 set(clipper2next_oom_support clipper2next_internal_test_support)
 if(MSVC AND CMAKE_BUILD_TYPE STREQUAL "Debug")
   # MSVC's checked-iterator proxy allocation occurs inside noexcept STL
   # constructors. Global new failure there terminates before library catches
-  # can execute. Only this fault-injection probe uses regular STL bookkeeping;
+  # can execute. Only these fault-injection probes use regular STL bookkeeping;
   # the product DLL and all other Debug tests keep their default iterator ABI.
   clipper2next_add_internal_test_support(clipper2next_oom_test_support)
   target_compile_definitions(clipper2next_oom_test_support
     PUBLIC _ITERATOR_DEBUG_LEVEL=0)
   set(clipper2next_oom_support clipper2next_oom_test_support)
 endif()
-target_link_libraries(
-  clipper2next_offset_cleanup_failure_contract
-  PRIVATE ${clipper2next_oom_support}
-)
-target_compile_features(
-  clipper2next_offset_cleanup_failure_contract PRIVATE cxx_std_23
-)
-target_compile_definitions(
-  clipper2next_offset_cleanup_failure_contract
-  PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY
-)
-clipper2next_target_warnings(clipper2next_offset_cleanup_failure_contract)
-# This contract intentionally replaces the complete global new/delete family
-# with malloc/free-backed fault injection. GCC 14 diagnoses that deliberate
-# replacement as a mismatched allocation pair after inlining standard-library
-# callers; keep the exception local to this test target.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  target_compile_options(
-    clipper2next_offset_cleanup_failure_contract
-    PRIVATE -Wno-mismatched-new-delete
-  )
-endif()
-clipper2next_target_sanitizers(clipper2next_offset_cleanup_failure_contract)
-add_test(
-  NAME clipper2next_offset_cleanup_failure_contract
-  COMMAND clipper2next_offset_cleanup_failure_contract
-)
+foreach(clipper2next_oom_probe IN ITEMS
+    clipper2next_offset_cleanup_failure_contract clipper2next_prepared_failure_contract
+    clipper2next_checked_failure_contract clipper2next_direct_materialization_contract)
+  target_link_libraries(${clipper2next_oom_probe} PRIVATE ${clipper2next_oom_support})
+  target_compile_features(${clipper2next_oom_probe} PRIVATE cxx_std_23)
+  target_compile_definitions(${clipper2next_oom_probe} PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY)
+  target_include_directories(${clipper2next_oom_probe} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  clipper2next_target_warnings(${clipper2next_oom_probe})
+  # This contract intentionally replaces the complete global new/delete family
+  # with malloc/free-backed fault injection. GCC 14 diagnoses that deliberate
+  # replacement as a mismatched allocation pair after inlining standard-library
+  # callers; keep the exception local to this test target.
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(
+      ${clipper2next_oom_probe}
+      PRIVATE -Wno-mismatched-new-delete
+    )
+  endif()
+  clipper2next_target_sanitizers(${clipper2next_oom_probe})
+  add_test(NAME ${clipper2next_oom_probe} COMMAND ${clipper2next_oom_probe})
+endforeach()
 
 if(WIN32)
   find_program(clipper2next_export_inspector NAMES dumpbin REQUIRED)
@@ -421,6 +531,9 @@ if(CLIPPER2NEXT_BUILD_ORACLE)
 
   add_executable(clipper2next_oracle_tests
     ${clipper2next_oracle_test_sources}
+    oracle/offset_contract.cpp
+    oracle/triangulation_contract.cpp
+    ${PROJECT_SOURCE_DIR}/packaging/test_package/correction_contract.cpp
   )
 
   target_link_libraries(clipper2next_oracle_tests
@@ -428,6 +541,7 @@ if(CLIPPER2NEXT_BUILD_ORACLE)
       clipper2next::clipper2next
       ${clipper2next_oracle_legacy_target}
       ${clipper2next_gtest_libs}
+      ${CMAKE_DL_LIBS}
   )
   target_include_directories(clipper2next_oracle_tests
     PRIVATE
@@ -436,13 +550,54 @@ if(CLIPPER2NEXT_BUILD_ORACLE)
   )
   target_compile_definitions(clipper2next_oracle_tests
     PRIVATE
-      CLIPPER2NEXT_DEFAULT_GEOMETRY_CORPUS_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/oracle/corpus/geometry"
+      CLIPPER2NEXT_DEFAULT_GEOMETRY_CORPUS_ROOT="${CLIPPER2NEXT_SELECTED_CORPUS_ROOT}"
+      CLIPPER2NEXT_OFFSET_CONTRACT_SOURCE="${CMAKE_CURRENT_SOURCE_DIR}/offset/offset_contract_cases.jsonl"
   )
   clipper2next_target_warnings(clipper2next_oracle_tests)
   clipper2next_target_sanitizers(clipper2next_oracle_tests)
   clipper2next_target_msvc_external_pgo(clipper2next_oracle_tests CORRECTNESS)
 
   gtest_discover_tests(clipper2next_oracle_tests)
+  foreach(producer IN ITEMS differential corpus)
+    if(producer STREQUAL "differential")
+      set(offset_contract_filter "Clipper2NextDifferentialOffsetTests.AbsoluteContractsRecordBothActualEngines")
+    else()
+      set(offset_contract_filter "ExternalGeometryCorpus.OffsetVerificationCorpusExecutesAgainstLegacy")
+    endif()
+    set(offset_evidence_dir "${CMAKE_CURRENT_BINARY_DIR}/offset-contract-${producer}")
+    add_test(NAME clipper2next_offset_contract_oracle_${producer}
+      COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/release/run_offset_contract_preflight.py"
+        --producer "$<TARGET_FILE:clipper2next_oracle_tests>"
+        "--producer-argument=--gtest_filter=${offset_contract_filter}"
+        "--producer-argument=--gtest_output=xml:${offset_evidence_dir}/producer.xml"
+        --output-dir "${offset_evidence_dir}")
+  endforeach()
+  set(tri_evidence_dir "${CMAKE_CURRENT_BINARY_DIR}/triangulation-contract")
+  add_test(NAME clipper2next_triangulation_contract_producer
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/release/run_triangulation_contract_preflight.py"
+      --producer "$<TARGET_FILE:clipper2next_oracle_tests>"
+      "--producer-argument=--gtest_filter=Clipper2NextDifferentialTriangulationTests.ActualBoundaryContractsRecordBothEngines"
+      --expected-count 124 --capture-only --output-dir "${tri_evidence_dir}")
+  set_tests_properties(clipper2next_triangulation_contract_producer PROPERTIES
+    FIXTURES_SETUP triangulation_actual_records)
+  add_test(NAME clipper2next_triangulation_contract_oracle
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/triangulation/triangulation_contract_oracle.py"
+      --records "${tri_evidence_dir}/actual-records.log" --expected-count 124
+      --result "${tri_evidence_dir}/triangulation-contract-result.json")
+  set_tests_properties(clipper2next_triangulation_contract_oracle PROPERTIES
+    FIXTURES_REQUIRED triangulation_actual_records DEPENDS clipper2next_triangulation_contract_producer)
+  add_test(NAME clipper2next_triangulation_contract_oracle_corpus
+    COMMAND "${Python3_EXECUTABLE}" "${CLIPPER2NEXT_TRIANGULATION_PREFLIGHT}"
+      --producer "$<TARGET_FILE:clipper2next_oracle_tests>"
+      "--producer-argument=--gtest_filter=ExternalGeometryCorpus.TriangulationVerificationCorpusExecutesAgainstLegacy"
+      --expected-count 240 ${CLIPPER2NEXT_CORPUS_PREFLIGHT_ARGS} --output-dir "${tri_evidence_dir}-corpus")
+  add_test(NAME clipper2next_triangulation_contract_rejections
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/triangulation/triangulation_contract_oracle_tests.py")
+  add_test(NAME clipper2next_offset_contract_source_bindings
+    COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/tests/offset_contract_source_tests.py")
+  add_test(NAME clipper2next_offset_contract_record_rejections
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/offset/offset_contract_oracle_tests.py")
+
 
 endif()
 
@@ -467,3 +622,16 @@ if(CLIPPER2NEXT_BUILD_FUZZERS)
   clipper2next_target_warnings(clipper2next_clip_fuzzer)
   clipper2next_target_sanitizers(clipper2next_clip_fuzzer)
 endif()
+
+# Cleanup is tested with the ordinary Debug iterator ABI and persistent rejection.
+add_executable(clipper2next_cache_release_no_allocation_contract
+  api/cache_release_no_allocation_contract.cpp support/allocation_failure_probe.cpp)
+target_link_libraries(clipper2next_cache_release_no_allocation_contract PRIVATE clipper2next_internal_test_support)
+target_include_directories(clipper2next_cache_release_no_allocation_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
+target_compile_definitions(clipper2next_cache_release_no_allocation_contract PRIVATE CLIPPER2NEXT_BUILDING_LIBRARY CLIPPER2NEXT_NO_ALLOCATION_CONTRACT)
+clipper2next_target_warnings(clipper2next_cache_release_no_allocation_contract)
+clipper2next_target_sanitizers(clipper2next_cache_release_no_allocation_contract)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  target_compile_options(clipper2next_cache_release_no_allocation_contract PRIVATE -Wno-mismatched-new-delete)
+endif()
+add_test(NAME clipper2next_cache_release_no_allocation_contract COMMAND clipper2next_cache_release_no_allocation_contract)

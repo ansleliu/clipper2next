@@ -19,7 +19,8 @@ struct borrowed_clip_limits64 final {
     std::size_t maximum_output_polygon_count{(std::numeric_limits<std::size_t>::max)()};
     std::size_t maximum_output_ring_count{(std::numeric_limits<std::size_t>::max)()};
     std::size_t maximum_output_point_count{(std::numeric_limits<std::size_t>::max)()};
-    // Bounds logical staging bytes, excluding engine storage and retained capacity.
+    // Bounds library-owned logical staging. Engine storage, retained capacity
+    // and storage owned by an external sink are excluded.
     std::size_t maximum_staging_workspace_bytes{(std::numeric_limits<std::size_t>::max)()};
     std::size_t maximum_engine_work{(std::numeric_limits<std::size_t>::max)()};
     // Bounds logical active engine storage; retained thread-cache capacity is excluded.

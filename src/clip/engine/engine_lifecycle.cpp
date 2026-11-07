@@ -1,8 +1,15 @@
 #include "clip/engine/private/engine_lifecycle.h"
+#include "clip/engine/private/engine_active_list.h"
+#include "support/private/storage/release_vector.h"
 
 #include "clip/engine/private/engine_scanline.h"
 
 namespace clipper2next::internal {
+
+auto retire_active_edge(clipper_base_state& state, active_edge_node& edge) noexcept -> void {
+    if (remove_from_ael(edge, state.actives_)) { state.active_pool_.retire(edge); }
+}
+
 
 auto dispose_active_edges(active_edge_node*& head) noexcept -> void {
     while (head) {
@@ -57,16 +64,16 @@ auto reset_engine_state_for_reuse(clipper_base_state& state) noexcept -> void {
 auto release_engine_state_storage(clipper_base_state& state) noexcept -> void {
     cleanup_engine_state(state);
     dispose_vertices_and_local_minima(state);
-    LocalMinimaList{}.swap(state.minima_list_);
+    release_vector(state.minima_list_);
     state.vertex_lists_.release();
     state.active_pool_.release();
     state.scanline_list_.release();
-    IntersectNodeList{}.swap(state.intersect_nodes_);
-    decltype(state.scanbeam_top_edges_){}.swap(state.scanbeam_top_edges_);
-    decltype(state.scanbeam_unit_edges_){}.swap(state.scanbeam_unit_edges_);
-    decltype(state.scanbeam_unit_scratch_){}.swap(state.scanbeam_unit_scratch_);
-    HorzSegmentList{}.swap(state.horz_seg_list_);
-    decltype(state.horz_join_list_){}.swap(state.horz_join_list_);
+    release_vector(state.intersect_nodes_);
+    release_vector(state.scanbeam_top_edges_);
+    release_vector(state.scanbeam_unit_edges_);
+    release_vector(state.scanbeam_unit_scratch_);
+    release_vector(state.horz_seg_list_);
+    release_vector(state.horz_join_list_);
     state.output_owner_.release();
 }
 

@@ -1,140 +1,86 @@
+#include "triangulation/private/triangulation_boundary_sector.h"
 #include "triangulation/private/triangulation_sweep_triangulators.h"
-
-#include "triangulation/private/triangulation_intersections.h"
-#include "triangulation/private/triangulation_legalizer.h"
-#include "triangulation/private/triangulation_sweep_line.h"
+#include "geometry/private/geometry_predicates.h"
 #include "triangulation/private/triangulation_topology.h"
-
-#include <algorithm>
+#include "triangulation/private/triangulation_sweep_line.h"
+#include <cassert>
 
 namespace clipper2next::internal {
 namespace {
-
-[[nodiscard]] auto horizontal_between(const triangulation_context& context,
-                                      const triangulation_vertex* first,
-                                      const triangulation_vertex* second) -> triangulation_edge* {
-    const auto y = (*first).pt.y;
-    const auto left = std::min((*first).pt.x, (*second).pt.x);
-    const auto right = std::max((*first).pt.x, (*second).pt.x);
-
-    auto* result = context.first_active.get();
-    while (result) {
-        if ((*(*result).vL).pt.y == y && (*(*result).vR).pt.y == y &&
-            (*(*result).vL).pt.x >= left && (*(*result).vR).pt.x <= right &&
-            ((*(*result).vL).pt.x != left || (*(*result).vL).pt.x != right)) {
-            break;
-        }
-        result = (*result).nextE.get();
-    }
-    return result;
-}
-
-}  // namespace
-
-auto triangulate_left(triangulation_context& context,
+auto triangulate_side(const triangulation_sweep_front& front,
                       triangulation_edge* edge,
                       triangulation_vertex* pivot,
-                      int64_t minimum_y) -> void {
-    if (context.internal_error) { return; }
-    triangulation_vertex* alternate_vertex = nullptr;
+                      bool left) -> void {
+    auto& context = front.context();
+    const auto minimum = front.minimum();
+    if (context.internal_error || edge_completed(edge)) { return; }
+    auto* vertex = edge->vB == pivot ? edge->vT.get() : edge->vB.get();
+    const auto owner = endpoint_event(*edge, pivot);
+    triangulation_vertex* alternate = nullptr;
     triangulation_edge* alternate_edge = nullptr;
-    auto* vertex = ((*edge).vB == pivot) ? (*edge).vT.get() : (*edge).vB.get();
-
-    for (auto candidate_edge_ref : (*pivot).edges) {
-        auto* candidate_edge = candidate_edge_ref.get();
-        if (candidate_edge == edge || !(*candidate_edge).isActive) { continue; }
-        auto* candidate_vertex =
-            (*candidate_edge).vT == pivot ? (*candidate_edge).vB.get() : (*candidate_edge).vT.get();
-        if (candidate_vertex == vertex) { continue; }
-
-        const auto cross = cross_product_sign((*vertex).pt, (*pivot).pt, (*candidate_vertex).pt);
-        if (cross == 0) {
-            if (((*vertex).pt.x > (*pivot).pt.x) == ((*pivot).pt.x > (*candidate_vertex).pt.x)) {
-                continue;
-            }
-        } else if (cross > 0 ||
-                   (alternate_vertex &&
-                    !LeftTurning((*candidate_vertex).pt, (*pivot).pt, (*alternate_vertex).pt))) {
+    triangulation_edge* link = nullptr;
+    std::optional<triangulation_sweep_diagonal> diagonal;
+    for (auto candidate_ref : pivot->edges) {
+        auto* candidate = candidate_ref.get();
+        if (candidate == edge || !candidate->isActive || edge_completed(candidate) ||
+            endpoint_event(*candidate, pivot) != owner) {
             continue;
         }
-        alternate_vertex = candidate_vertex;
-        alternate_edge = candidate_edge;
-    }
-
-    if (!alternate_vertex || (*alternate_vertex).pt.y < minimum_y) { return; }
-    if ((*alternate_vertex).pt.y < (*pivot).pt.y) {
-        if (is_left_edge(*alternate_edge)) { return; }
-    } else if ((*alternate_vertex).pt.y > (*pivot).pt.y) {
-        if (is_right_edge(*alternate_edge)) { return; }
-    }
-
-    auto* linking_edge =
-        find_linking_edge(alternate_vertex, vertex, (*alternate_vertex).pt.y < (*vertex).pt.y);
-    if (!linking_edge) {
-        if ((*alternate_vertex).pt.y == (*vertex).pt.y && (*vertex).pt.y == minimum_y &&
-            horizontal_between(context, alternate_vertex, vertex)) {
-            return;
+        auto* point = candidate->vB == pivot ? candidate->vT.get() : candidate->vB.get();
+        if (point == vertex || sweep_before(minimum, point->pt)) { continue; }
+        const auto cross = front.numeric_domain().orientation(vertex->pt, pivot->pt, point->pt);
+        if (left ? cross >= 0 : cross <= 0) { continue; }
+        if (alternate) {
+            const auto turn =
+                front.numeric_domain().orientation(point->pt, pivot->pt, alternate->pt);
+            if (left ? turn >= 0 : turn <= 0) { continue; }
         }
-        linking_edge = create_sweep_loose_edge(context, alternate_vertex, vertex);
+        if (sweep_before(pivot->pt, point->pt)) {
+            if (left ? is_left_edge(*candidate) : is_right_edge(*candidate)) { continue; }
+        } else if (left ? is_right_edge(*candidate) : is_left_edge(*candidate)) {
+            continue;
+        }
+        const auto va = endpoint_event(*edge, vertex), vb = endpoint_event(*candidate, point);
+        if (owner != no_boundary_event &&
+            (!context.boundary_events[owner].sector.contains_triangle(vertex->pt, point->pt) ||
+             !context.boundary_events[va].sector.contains_triangle(pivot->pt, point->pt) ||
+             !context.boundary_events[vb].sector.contains_triangle(pivot->pt, vertex->pt))) {
+            continue;
+        }
+        auto* candidate_link = find_linking_edge(point, vertex, vb, va);
+        std::optional<triangulation_sweep_diagonal> proof;
+        if (!candidate_link) {
+            auto proposed = triangulation_sweep_diagonal::probe(front, point, vertex);
+            if (!proposed) { continue; }
+            proof.emplace(std::move(*proposed));
+        }
+        alternate = point;
+        alternate_edge = candidate;
+        link = candidate_link;
+        diagonal.reset();
+        if (proof) { diagonal.emplace(std::move(*proof)); }
     }
-
-    if (!create_sweep_triangle(context, edge, alternate_edge, linking_edge)) { return; }
-    if (!edge_completed(linking_edge)) {
-        triangulate_left(context, linking_edge, alternate_vertex, minimum_y);
+    if (!alternate) { return; }
+    if (!link) {
+        assert(diagonal && diagonal->first() == alternate && diagonal->second() == vertex);
+        link = create_sweep_loose_edge(std::move(*diagonal));
     }
+    if (!link) {
+        mark_triangulation_internal_error(context);
+        return;
+    }
+    if (!create_sweep_triangle(context, edge, alternate_edge, link, front.numeric_domain())) { return; }
+    if (!edge_completed(link)) { triangulate_side(front, link, alternate, left); }
 }
-
-auto triangulate_right(triangulation_context& context,
+}
+auto triangulate_left(const triangulation_sweep_front& front,
+                      triangulation_edge* edge,
+                      triangulation_vertex* pivot) -> void {
+    triangulate_side(front, edge, pivot, true);
+}
+auto triangulate_right(const triangulation_sweep_front& front,
                        triangulation_edge* edge,
-                       triangulation_vertex* pivot,
-                       int64_t minimum_y) -> void {
-    if (context.internal_error) { return; }
-    triangulation_vertex* alternate_vertex = nullptr;
-    triangulation_edge* alternate_edge = nullptr;
-    auto* vertex = ((*edge).vB == pivot) ? (*edge).vT.get() : (*edge).vB.get();
-
-    for (auto candidate_edge_ref : (*pivot).edges) {
-        auto* candidate_edge = candidate_edge_ref.get();
-        if (candidate_edge == edge || !(*candidate_edge).isActive) { continue; }
-        auto* candidate_vertex =
-            (*candidate_edge).vT == pivot ? (*candidate_edge).vB.get() : (*candidate_edge).vT.get();
-        if (candidate_vertex == vertex) { continue; }
-
-        const auto cross = cross_product_sign((*vertex).pt, (*pivot).pt, (*candidate_vertex).pt);
-        if (cross == 0) {
-            if (((*vertex).pt.x > (*pivot).pt.x) == ((*pivot).pt.x > (*candidate_vertex).pt.x)) {
-                continue;
-            }
-        } else if (cross < 0 ||
-                   (alternate_vertex &&
-                    !RightTurning((*candidate_vertex).pt, (*pivot).pt, (*alternate_vertex).pt))) {
-            continue;
-        }
-        alternate_vertex = candidate_vertex;
-        alternate_edge = candidate_edge;
-    }
-
-    if (!alternate_vertex || (*alternate_vertex).pt.y < minimum_y) { return; }
-    if ((*alternate_vertex).pt.y < (*pivot).pt.y) {
-        if (is_right_edge(*alternate_edge)) { return; }
-    } else if ((*alternate_vertex).pt.y > (*pivot).pt.y) {
-        if (is_left_edge(*alternate_edge)) { return; }
-    }
-
-    auto* linking_edge =
-        find_linking_edge(alternate_vertex, vertex, (*alternate_vertex).pt.y > (*vertex).pt.y);
-    if (!linking_edge) {
-        if ((*alternate_vertex).pt.y == (*vertex).pt.y && (*vertex).pt.y == minimum_y &&
-            horizontal_between(context, alternate_vertex, vertex)) {
-            return;
-        }
-        linking_edge = create_sweep_loose_edge(context, alternate_vertex, vertex);
-    }
-
-    if (!create_sweep_triangle(context, edge, linking_edge, alternate_edge)) { return; }
-    if (!edge_completed(linking_edge)) {
-        triangulate_right(context, linking_edge, alternate_vertex, minimum_y);
-    }
+                       triangulation_vertex* pivot) -> void {
+    triangulate_side(front, edge, pivot, false);
 }
-
-}  // namespace clipper2next::internal
+}

@@ -16,15 +16,6 @@ auto check_bounds(OutRecList& output_records,
     clean_collinear(output_records, output_record, options);
     if (!output_record->pts) { return false; }
 
-    if (options.path_storage == output_path_storage::owning_path) {
-        if (!build_path64(
-                output_record->pts, options.reverse_solution, false, output_record->path)) {
-            return false;
-        }
-        output_record->bounds = bounds(output_record->path);
-        return true;
-    }
-
     auto bounds = Rect64::invalid_rect();
     auto* current = output_record->pts.get();
     do {

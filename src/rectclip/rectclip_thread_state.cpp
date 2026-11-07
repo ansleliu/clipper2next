@@ -1,4 +1,6 @@
 #include "rectclip/private/rectclip_thread_state.h"
+#include "support/private/storage/release_vector.h"
+#include "support/private/storage/thread_state_storage.h"
 
 #include "rectclip/private/rectclip_context.h"
 
@@ -8,12 +10,6 @@ auto rectclip_context::reset_polygon_storage() -> void {
     op_container.clear();
     results.clear();
     for (auto& edge : edges) { edge.clear(); }
-    start_locs.clear();
-}
-
-auto rectclip_context::reset_line_storage() -> void {
-    results.clear();
-    op_container.clear();
     start_locs.clear();
 }
 
@@ -32,35 +28,69 @@ auto rectclip_context::reset_for_rect(const Rect64& rect_) -> void {
 
 auto rectclip_context::release() noexcept -> void {
     op_container.release();
-    rectclip_node_list{}.swap(results);
-    for (auto& edge : edges) { rectclip_node_list{}.swap(edge); }
-    std::vector<rect_location>{}.swap(start_locs);
+    release_vector(results);
+    for (auto& edge : edges) { release_vector(edge); }
+    release_vector(start_locs);
 }
+
+auto rectclip_operation_state::reset() noexcept -> void {
+    if (context) { context->reset_polygon_storage(); }
+    bounds.clear();
+}
+
+auto rectclip_operation_state::release() noexcept -> void {
+    if (context) { context->release(); }
+    release_vector(bounds);
+}
+
+struct rectclip_slot final {
+    rectclip_operation_state state{};
+    bool in_use{};
+    bool release_requested{};
+};
 
 namespace {
+using storage = thread_state_storage<rectclip_slot>;
 
-[[nodiscard]] auto reusable_rectclip_context_storage() -> rectclip_context& {
-    thread_local rectclip_context context{Rect64{}};
-    return context;
+auto release_slot(rectclip_slot& slot) noexcept -> void {
+    // Retain ownership through every allocator callback during deallocation.
+    slot.in_use = true;
+    slot.state.release();
+    slot.release_requested = false;
+    slot.in_use = false;
 }
-
 }  // namespace
 
-auto acquire_reusable_rectclip_bounds_buffer() -> std::vector<Rect64>& {
-    thread_local std::vector<Rect64> path_bounds;
-    return path_bounds;
+rectclip_operation_lease::rectclip_operation_lease() {
+    auto& slot = storage::acquire();
+    if (slot.in_use) {
+        state_ = &local_.emplace();
+        return;
+    }
+    slot.in_use = true;
+    slot_ = &slot;
+    state_ = &slot.state;
 }
 
-auto acquire_reusable_rectclip_context(const Rect64& rect) -> rectclip_context& {
-    auto& context = reusable_rectclip_context_storage();
-    context.reset_for_rect(rect);
-    return context;
+rectclip_operation_lease::~rectclip_operation_lease() {
+    state_->reset();
+    if (slot_) {
+        if (slot_->release_requested) { release_slot(*slot_); }
+        else { slot_->in_use = false; }
+    }
+}
+
+auto rectclip_operation_lease::context(const Rect64& rect) -> rectclip_context& {
+    if (state_->context) { state_->context->reset_for_rect(rect); }
+    else { state_->context.emplace(rect); }
+    return *state_->context;
 }
 
 auto release_rectclip_thread_state() noexcept -> void {
-    reusable_rectclip_context_storage().release();
-    auto& bounds_buffer = acquire_reusable_rectclip_bounds_buffer();
-    std::vector<Rect64>{}.swap(bounds_buffer);
+    auto* slot = storage::peek_existing_slot();
+    if (!slot) { return; }
+    if (slot->in_use) { slot->release_requested = true; return; }
+    release_slot(*slot);
 }
 
 }  // namespace clipper2next::internal

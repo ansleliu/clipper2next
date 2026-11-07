@@ -1,7 +1,5 @@
 #include "rectclip/private/rectclip_path_builder.h"
 
-#include <cstddef>
-
 namespace clipper2next::internal {
 namespace {
 
@@ -12,23 +10,13 @@ namespace {
     return node->next;
 }
 
-[[nodiscard]] auto materialize_node_ring(rectclip_node* start) -> Path64 {
-    Path64 result;
-    auto count = std::size_t{1U};
-    for (auto* node = start->next.get(); node != start; node = node->next.get()) { ++count; }
-    result.reserve(count);
-    auto* node = start;
-    do {
-        result.emplace_back(node->pt);
-        node = node->next.get();
-    } while (node != start);
-    return result;
-}
-
 }  // namespace
 
-auto build_polygon_path(rectclip_node*& node) -> Path64 {
-    if (!node || node->next == node->prev) { return {}; }
+auto prepare_polygon_path(rectclip_node*& node) -> void {
+    if (!node || node->next == node->prev) {
+        node = nullptr;
+        return;
+    }
 
     rectclip_node* node2 = node->next;
     while (node2 && node2 != node) {
@@ -40,15 +28,6 @@ auto build_polygon_path(rectclip_node*& node) -> Path64 {
         }
     }
     node = node2;
-    if (!node2) { return {}; }
-
-    return materialize_node_ring(node);
-}
-
-auto build_line_path(rectclip_node*& node) -> Path64 {
-    if (!node || node == node->next) { return {}; }
-    node = node->next;
-    return materialize_node_ring(node);
 }
 
 }  // namespace clipper2next::internal

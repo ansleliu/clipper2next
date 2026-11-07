@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rectclip/private/rectclip_graph.h"
+#include <span>
 
 namespace clipper2next::internal {
 
@@ -26,5 +27,30 @@ namespace clipper2next::internal {
                                           rect_location location,
                                           size_t& index,
                                           size_t high_index) -> rect_location;
+
+template <class AddPoints>
+auto advance_rectclip_location(const Rect64& rect, const Path64& path,
+                               rect_location& location, size_t& index,
+                               size_t high_index, AddPoints&& add) -> void {
+    if (location != rect_location::Inside) {
+        location = next_external_location(rect, path, location, index, high_index);
+        return;
+    }
+    const auto first = index;
+    while (index <= high_index) {
+        if (path[index].x < rect.left) { location = rect_location::Left; }
+        else if (path[index].x > rect.right) { location = rect_location::Right; }
+        else if (path[index].y > rect.bottom) { location = rect_location::Bottom; }
+        else if (path[index].y < rect.top) { location = rect_location::Top; }
+        else {
+            ++index;
+            continue;
+        }
+        break;
+    }
+    if (index != first) {
+        add(std::span<const Point64>{path}.subspan(first, index - first));
+    }
+}
 
 }  // namespace clipper2next::internal

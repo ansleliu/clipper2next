@@ -1,4 +1,5 @@
 #include "clip/engine/private/engine_scanline.h"
+#include "support/private/storage/release_vector.h"
 
 #include <algorithm>
 
@@ -9,11 +10,13 @@ auto scanline_queue::reserve(std::size_t capacity) -> void {
 }
 
 auto scanline_queue::clear() noexcept -> void {
+    last_inserted_.reset();
     values_.clear();
 }
 
 auto scanline_queue::release() noexcept -> void {
-    std::vector<int64_t>{}.swap(values_);
+    last_inserted_.reset();
+    release_vector(values_);
 }
 
 auto scanline_queue::empty() const noexcept -> bool {
@@ -29,8 +32,10 @@ auto scanline_queue::capacity() const noexcept -> std::size_t {
 }
 
 auto push_scanline(scanline_queue& scanlines, int64_t y) -> void {
+    if (scanlines.last_inserted_ == y) { return; }
     scanlines.values_.push_back(y);
     std::push_heap(scanlines.values_.begin(), scanlines.values_.end());
+    scanlines.last_inserted_ = y;
 }
 
 auto pop_scanline(scanline_queue& scanlines, int64_t& y) -> bool {
@@ -43,11 +48,12 @@ auto pop_scanline(scanline_queue& scanlines, int64_t& y) -> bool {
         std::pop_heap(values.begin(), values.end());
         values.pop_back();
     }
+    if (scanlines.last_inserted_ == y) { scanlines.last_inserted_.reset(); }
     return true;
 }
 
 auto reset_scanlines(scanline_queue& scanlines, const LocalMinimaList& minima) -> void {
-    scanlines.values_.clear();
+    scanlines.clear();
     scanlines.values_.reserve(minima.size());
     bool has_last_y = false;
     int64_t last_y = 0;
@@ -62,6 +68,7 @@ auto reset_scanlines(scanline_queue& scanlines, const LocalMinimaList& minima) -
 }
 
 auto reset_scanlines(scanline_queue& scanlines, std::span<const int64_t> precomputed_heap) -> void {
+    scanlines.last_inserted_.reset();
     scanlines.values_.assign(precomputed_heap.begin(), precomputed_heap.end());
 }
 
@@ -82,7 +89,14 @@ auto compare_local_minima_bottom_up(const local_minimum_node& first,
 }
 
 auto sort_local_minima(LocalMinimaList& minima) -> void {
-    std::stable_sort(minima.begin(), minima.end(), compare_local_minima_bottom_up);
+    // Reassign from the current order on every sort. The ordinal breaks only
+    // geometric ties, exactly preserving the previous stable-sort result.
+    for (std::size_t index = 0; index < minima.size(); ++index) { minima[index].sort_ordinal = index; }
+    std::sort(minima.begin(), minima.end(), [](const auto& first, const auto& second) {
+        if (compare_local_minima_bottom_up(first, second)) { return true; }
+        if (compare_local_minima_bottom_up(second, first)) { return false; }
+        return first.sort_ordinal < second.sort_ordinal;
+    });
 }
 
 }  // namespace clipper2next::internal

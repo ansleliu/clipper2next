@@ -131,29 +131,6 @@ auto cross_product_sign(const Point64& first, const Point64& second, const Point
     return compare_signed_products(exact_ab_x, exact_bc_y, exact_ab_y, exact_bc_x);
 }
 
-auto cross_product_sign_in_clipper_range(const Point64& first,
-                                         const Point64& second,
-                                         const Point64& third) -> int {
-    const auto ab_x = second.x - first.x;
-    const auto bc_y = third.y - second.y;
-    const auto ab_y = second.y - first.y;
-    const auto bc_x = third.x - second.x;
-#if (defined(__clang__) || defined(__GNUC__)) && UINTPTR_MAX >= UINT64_MAX
-    const auto lhs = static_cast<__int128_t>(ab_x) * static_cast<__int128_t>(bc_y);
-    const auto rhs = static_cast<__int128_t>(ab_y) * static_cast<__int128_t>(bc_x);
-    return (lhs > rhs) - (lhs < rhs);
-#elif defined(_MSC_VER) && defined(_M_X64)
-    __int64 lhs_high = 0;
-    __int64 rhs_high = 0;
-    const auto lhs_low = static_cast<unsigned __int64>(_mul128(ab_x, bc_y, &lhs_high));
-    const auto rhs_low = static_cast<unsigned __int64>(_mul128(ab_y, bc_x, &rhs_high));
-    if (lhs_high != rhs_high) { return lhs_high > rhs_high ? 1 : -1; }
-    return (lhs_low > rhs_low) - (lhs_low < rhs_low);
-#else
-    return cross_product_sign(first, second, third);
-#endif
-}
-
 auto cross_product_sign(const PointD& first, const PointD& second, const PointD& third) -> int {
     const auto cross = cross_product(first, second, third);
     return (cross > 0.0) - (cross < 0.0);

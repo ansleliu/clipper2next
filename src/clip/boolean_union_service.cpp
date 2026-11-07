@@ -21,10 +21,6 @@ constexpr std::size_t component_union_path_threshold = 2U;
     request.fill_rule = options.fill_rule;
     request.subjects = std::move(paths);
     request.options = options.options;
-    if (!clip_request_in_range(request)) { return {}; }
-    if (options.use_offset_cleanup_monotone_scanbeam_runs) {
-        return execute_clip_validated_for_offset_cleanup(request);
-    }
     return execute_clip_validated(request);
 }
 
@@ -71,6 +67,12 @@ auto append_union_component(Paths64& paths,
 [[nodiscard]] auto union_disjoint_bbox_components(Paths64&& paths,
                                                   const clip_union_options& options)
     -> paths64_result {
+    if (const auto error = validate_clip_parameters(
+            ClipType::Union, options.fill_rule, options.options.intersection_policy);
+        error != clipper_error_code::ok) {
+        raise_clipper_error(error);
+    }
+    if (!clip_paths_in_range(paths)) { raise_clipper_error(clipper_error_code::coordinate_range); }
     if (paths.size() == 1U) {
         paths64_result result;
         if (try_append_singleton_component_direct(paths.front(), options, result)) {
@@ -123,10 +125,14 @@ auto union_closed_paths(Paths64&& paths, const clip_union_options& options) -> P
 auto union_closed_paths_into_tree(const Paths64& paths,
                                   PolyTree64& tree,
                                   const clip_union_options& options) -> void {
-    tree.clear();
-    for (const auto& path : union_closed_paths(paths, options)) {
-        static_cast<void>(tree.add_child(tree.root(), path));
-    }
+    clip_request64 request;
+    request.clip_type = ClipType::Union;
+    request.fill_rule = options.fill_rule;
+    request.subjects = paths;
+    request.options = options.options;
+    if (!clip_request_in_range(request)) { raise_clipper_error(clipper_error_code::coordinate_range); }
+    Paths64 open;
+    execute_clip_tree_into_validated(request, tree, open);
 }
 
 }  // namespace clipper2next::internal

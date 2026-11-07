@@ -10,10 +10,11 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 TOOLS_DIR = REPO_ROOT / "benchmarks" / "tools"
 SCRIPT = TOOLS_DIR / "gates" / "external_legacy_speedup_gate.py"
+from benchmarks.tools.tests.measurement_fixtures import complete_measurements
 
 
 def write_benchmark(path: Path, benchmarks: list[dict]) -> None:
-    path.write_text(json.dumps({"benchmarks": benchmarks}), encoding="utf-8")
+    path.write_text(json.dumps({"benchmarks": complete_measurements(benchmarks)}), encoding="utf-8")
 
 
 class ExternalLegacySpeedupGateTests(unittest.TestCase):

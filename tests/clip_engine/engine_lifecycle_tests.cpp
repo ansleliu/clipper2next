@@ -1,7 +1,10 @@
 #include "clip/engine/private/engine_lifecycle.h"
 #include "clip/engine/private/engine_scanline.h"
+#include "clip/engine/private/engine_scanbeam_processor.h"
+#include "clip/engine/private/engine_scanbeam_services.h"
 
 #include <gtest/gtest.h>
+#include <array>
 
 namespace next = clipper2next;
 
@@ -46,12 +49,26 @@ TEST(Clipper2NextEngineLifecycleTests, LifecycleDisposeVerticesClearsReusableDat
     next::internal::reuseable_data_state state;
     next::internal::Vertex vertex{{1, 2}};
     state.minima_list_.emplace_back(vertex, next::PathType::Clip, false);
-    static_cast<void>(state.vertex_lists_.acquire(2));
+    auto* const original = state.vertex_lists_.acquire(2);
 
     next::internal::dispose_vertices_and_local_minima(state);
 
     EXPECT_TRUE(state.minima_list_.empty());
     EXPECT_EQ(state.vertex_lists_.size(), 0U);
+    EXPECT_EQ(state.vertex_lists_.acquire(2), original);
+    next::internal::dispose_vertices_and_local_minima(state);
+
+    next::internal::execution_resource_ledger resources;
+    resources.maximum_workspace_bytes = 0U;
+    state.vertex_lists_.bind(&resources);
+    EXPECT_EQ(state.vertex_lists_.acquire(2), original);
+    EXPECT_EQ(resources.engine_bytes, 0U);
+    EXPECT_GT(resources.staging_bytes, 0U);
+    next::internal::dispose_vertices_and_local_minima(state);
+    EXPECT_EQ(resources.staging_bytes, 0U);
+    state.vertex_lists_.detach();
+    EXPECT_EQ(state.vertex_lists_.acquire(2), original);
+    next::internal::dispose_vertices_and_local_minima(state);
 }
 
 TEST(Clipper2NextEngineLifecycleTests, LifecycleDisposeActiveEdgesNullsHead) {
@@ -90,6 +107,34 @@ TEST(Clipper2NextEngineLifecycleTests, LifecycleCleanupEngineStateClearsTransien
     EXPECT_TRUE(state.horz_join_list_.empty());
     EXPECT_TRUE(state.active_pool_.empty());
     EXPECT_TRUE(state.output_owner_.records().empty());
+
+    std::array<next::internal::parallel_engine_workspace_slot, 1> slots{};
+    next::internal::parallel_engine_workspace_observer observer{slots};
+    next::internal::execution_resource_ledger root;
+    root.parallel_observer = &slots[0];
+    root.maximum_workspace_bytes = 2U * sizeof(next::internal::active_edge_node);
+    next::internal::clipper_base_state metered;
+    metered.active_pool_.bind(&root);
+    const next::Paths64 disjoint{{{0,0},{10,0},{10,10},{0,10}},
+                                {{0,20},{10,20},{10,30},{0,30}},
+                                {{0,40},{10,40},{10,50},{0,50}}};
+    next::internal::add_paths_to_state(metered, disjoint, next::PathType::Subject, false);
+    next::internal::engine_execution_context context{metered};
+    next::internal::engine_scanbeam_processor processor{context};
+    next::internal::engine_scanbeam_orchestration_options options;
+    next::internal::engine_intersection_services intersections;
+    bool succeeded = true, executed = false;
+    next::internal::engine_scanbeam_services services{metered, options, succeeded, intersections};
+    EXPECT_NO_THROW(executed = processor.execute(services, next::ClipType::Union, next::FillRule::NonZero, true));
+    EXPECT_TRUE(executed);
+    EXPECT_FALSE(metered.has_active_edges());
+    EXPECT_TRUE(metered.active_pool_.empty());
+    EXPECT_EQ(root.engine_bytes, 0U);
+    EXPECT_EQ(observer.peak(), 2U * sizeof(next::internal::active_edge_node));
+    next::internal::cleanup_engine_state(metered);
+    next::internal::dispose_vertices_and_local_minima(metered);
+    metered.active_pool_.detach();
+
 }
 
 TEST(Clipper2NextEngineLifecycleTests, LifecycleResetEngineStateSortsMinimaAndQueuesScanlines) {

@@ -28,5 +28,7 @@ tests/oracle/corpus/external_sources/line_wkt_extended/
 # Local engineering process artifacts must never enter the repository.
 /RELEASE.md
 /benchmarks/README.md
-docs/superpowers/plans/
-docs/superpowers/specs/
+/.codex/
+/.superpowers/
+/docs/superpowers/
+/tests/oracle/corpus/geometry/manifests/fetch-report.jsonl

@@ -1,4 +1,5 @@
 #include "clip/engine/private/engine_output_owner.h"
+#include "support/private/storage/release_vector.h"
 
 #include "clip/engine/private/engine_output.h"
 
@@ -15,7 +16,7 @@ auto engine_output_owner::dispose_all() noexcept -> void {
 }
 
 auto engine_output_owner::release() noexcept -> void {
-    OutRecList{}.swap(records_);
+    release_vector(records_);
     point_pool_.release();
     record_pool_.release();
 }

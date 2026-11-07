@@ -3,10 +3,98 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <atomic>
 #include <cstdint>
+#include <thread>
+#include <utility>
 
 namespace next = clipper2next;
 namespace test = clipper2next::tests;
+
+TEST(Clipper2NextRectClipRequestApiTests, MoveTransfersCompleteSnapshotAndDefaultsSource) {
+    const next::prepared_rect_clip_request64 empty;
+    const next::rect_clip_request64 request{
+        {3, 5, 40, 50}, {{{10, 10}, {20, 10}, {20, 20}, {10, 20}}}};
+    const auto expected = next::prepare_rect_clip_request(request);
+    auto source = expected;
+    auto moved = next::prepared_rect_clip_request64{std::move(source)};
+    EXPECT_EQ(moved.request().rect, request.rect);
+    EXPECT_EQ(moved.request().paths, request.paths);
+    EXPECT_EQ(next::rect_clip(moved).paths, next::rect_clip(expected).paths);
+    EXPECT_EQ(source.request().rect, empty.request().rect);
+    EXPECT_EQ(source.request().paths, empty.request().paths);
+    EXPECT_EQ(next::rect_clip(source).paths, next::rect_clip(empty).paths);
+    EXPECT_TRUE(next::rect_clip(source.request()).paths.empty());
+    source = expected;
+    moved = std::move(source);
+    EXPECT_EQ(moved.request().rect, request.rect);
+    EXPECT_EQ(moved.request().paths, request.paths);
+    EXPECT_EQ(next::rect_clip(moved).paths, next::rect_clip(expected).paths);
+    EXPECT_EQ(source.request().rect, empty.request().rect);
+    EXPECT_EQ(source.request().paths, empty.request().paths);
+    EXPECT_EQ(next::rect_clip(source).paths, next::rect_clip(empty).paths);
+    EXPECT_TRUE(next::rect_clip(source.request()).paths.empty());
+}
+
+TEST(Clipper2NextRectClipRequestApiTests, DefaultAndSelfAssignmentRemainLegal) {
+    next::prepared_rect_clip_request64 empty;
+    EXPECT_TRUE(next::rect_clip(empty).paths.empty());
+    auto snapshot = next::prepare_rect_clip_request(
+        {{3, 5, 40, 50}, {{{10, 10}, {20, 10}, {20, 20}, {10, 20}}}});
+    const auto expected = snapshot;
+    auto& alias = snapshot;
+    snapshot = alias;
+    EXPECT_EQ(snapshot.request().rect, expected.request().rect);
+    EXPECT_EQ(snapshot.request().paths, expected.request().paths);
+    EXPECT_EQ(next::rect_clip(snapshot).paths, next::rect_clip(expected).paths);
+    snapshot = std::move(alias);
+    EXPECT_EQ(next::rect_clip(snapshot).paths, next::rect_clip(snapshot.request()).paths);
+}
+
+TEST(Clipper2NextRectClipRequestApiTests, FactoriesRejectInvalidCoordinates) {
+    const next::Paths64 invalid{{{next::MAX_COORD + 1, 0}, {10, 0}, {10, 10}}};
+    EXPECT_THROW((void)next::prepare_rect_clip_request({{0, 0, 100, 100}, invalid}),
+                 next::clipper_error);
+    EXPECT_THROW((void)next::prepare_rect_clip_request({{0, 0, next::MAX_COORD + 1, 100}, {}}),
+                 next::clipper_error);
+    EXPECT_THROW((void)next::prepare_immutable_rect_clip_paths(invalid), next::clipper_error);
+}
+
+TEST(Clipper2NextRectClipRequestApiTests, ImmutableSnapshotsSupportMoveCopyAndConcurrentReads) {
+    const next::Rect64 rect{0, 0, 40, 40};
+    const next::Paths64 paths{{{10, 10}, {20, 10}, {20, 20}, {10, 20}}};
+    const auto expected = next::prepare_immutable_rect_clip_paths(paths);
+    const auto reference = next::rect_clip(rect, expected).paths;
+    ASSERT_FALSE(reference.empty());
+    auto source = expected;
+    auto moved = next::immutable_rect_clip_paths64{std::move(source)};
+    EXPECT_TRUE(next::rect_clip(rect, source).paths.empty());
+    EXPECT_EQ(next::rect_clip(rect, moved).paths, reference);
+    source = expected;
+    moved = std::move(source);
+    EXPECT_TRUE(next::rect_clip(rect, source).paths.empty());
+    EXPECT_EQ(next::rect_clip(rect, moved).paths, reference);
+    auto& alias = moved;
+    moved = alias;
+    EXPECT_EQ(next::rect_clip(rect, moved).paths, reference);
+    moved = std::move(alias);
+    EXPECT_EQ(next::rect_clip(rect, moved).paths, reference);
+    std::array<std::thread, 4U> workers;
+    std::array<std::atomic<bool>, 4U> matched;
+    for (std::size_t index = 0; index < workers.size(); ++index) {
+        matched[index].store(true);
+        workers[index] = std::thread{[&, index] {
+            for (int iteration = 0; iteration < 20; ++iteration) {
+                if (next::rect_clip(rect, moved).paths != reference) {
+                    matched[index].store(false);
+                }
+            }
+        }};
+    }
+    for (auto& worker : workers) { worker.join(); }
+    for (const auto& match : matched) { EXPECT_TRUE(match.load()); }
+}
 
 namespace {
 
@@ -149,4 +237,21 @@ TEST(Clipper2NextRectClipRequestApiTests, UnpreparedRectClipRecomputesContainmen
     const auto prepared_result = next::rect_clip(next::prepare_rect_clip_request(request));
     EXPECT_EQ(unprepared_result.paths, prepared_result.paths);
     EXPECT_NE(unprepared_result.paths, warmup_result.paths);
+}
+
+TEST(Clipper2NextRectClipRequestApiTests, MultipleLinesRetainEarlierKernelNodesUntilMaterialization) {
+    next::rect_clip_lines_request64 request;
+    request.rect = {-10, -10, 110, 110};
+    request.lines = {{{-50, 50}, {25, 50}, {150, 50}},
+                     {{30, -80}, {30, 30}, {30, 180}},
+                     {{-40, -40}, {140, 140}}};
+    const next::Paths64 expected{{{-10, 50}, {25, 50}, {110, 50}},
+                                 {{30, -10}, {30, 30}, {30, 110}},
+                                 {{-10, -10}, {110, 110}}};
+    EXPECT_EQ(next::rect_clip_lines(request).paths, expected);
+    next::rect_clip_result64 result;
+    next::rect_clip_lines_into(request, result);
+    EXPECT_EQ(result.paths, expected);
+    next::rect_clip_lines_into(request, result);
+    EXPECT_EQ(result.paths, expected);
 }

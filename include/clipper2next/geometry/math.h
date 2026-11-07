@@ -131,7 +131,8 @@ template <typename T>
 
 template <typename T>
 [[nodiscard]] inline auto translate_point(const Point<T>& point, double dx, double dy) -> Point<T> {
-    return Point<T>{point.x + dx, point.y + dy};
+    return geotypes::pointCast<T>(geotypes::Point2{point.x + dx, point.y + dy},
+                                  geotypes::CoordinateRounding::NearestAwayFromZero);
 }
 
 template <typename T>
@@ -164,9 +165,9 @@ template <typename T>
     if constexpr (std::is_integral_v<T>) {
         return Point<T>{
             geotypes::saturatedAddSignedDelta(segment_start.x,
-                                                     round_to_even_int64(ratio * dx)),
+                geotypes::truncatingCoordinateCast<int64_t>(std::nearbyint(ratio * dx))),
             geotypes::saturatedAddSignedDelta(segment_start.y,
-                                                     round_to_even_int64(ratio * dy)),
+                geotypes::truncatingCoordinateCast<int64_t>(std::nearbyint(ratio * dy))),
         };
     } else {
         return Point<T>{

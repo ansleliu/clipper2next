@@ -122,6 +122,7 @@ public:
     [[nodiscard]] auto scale() const noexcept -> double { return scale_; }
 
 private:
+    friend struct polygon_tree_rebuild_access;
     struct node {
         node_id parent{};
         path_type polygon;

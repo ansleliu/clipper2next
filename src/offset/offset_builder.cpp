@@ -3,13 +3,13 @@
 #include "offset/private/offset_algorithm.h"
 #include "offset/private/offset_group.h"
 #include "offset/private/offset_state.h"
+#include "offset/private/offset_request_validation.h"
 
+#include "clip/engine/private/polygon_tree_rebuild_access.h"
 #include <utility>
 #include <vector>
 
 namespace clipper2next {
-
-namespace {}  // namespace
 
 struct offset_builder::impl final {
     std::vector<internal::offset_group> groups{};
@@ -48,8 +48,17 @@ struct offset_builder::impl final {
     }
 
     auto execute(Paths64& solution, PolyTree64* solution_tree) const -> void {
-        internal::offset_state state;
         try {
+            const auto error = internal::validate_offset_parameters(
+                delta, miter_limit, arc_tolerance, geotypes::CoordinateRounding::NearestEven,
+                options.intersection_policy);
+            if (error != clipper_error_code::ok) { raise_clipper_error(error); }
+            for (const auto& group : groups) {
+                const auto group_error =
+                    internal::validate_offset_group_types(group.join_type, group.end_type);
+                if (group_error != clipper_error_code::ok) { raise_clipper_error(group_error); }
+            }
+            internal::offset_state state;
             internal::execute_offset_algorithm(state,
                                                groups,
                                                delta,
@@ -67,7 +76,9 @@ struct offset_builder::impl final {
             // This boundary owns the caller's output; failed generation or
             // cleanup must not publish earlier groups as a complete result.
             solution.clear();
-            if (solution_tree != nullptr) { solution_tree->clear(); }
+            if (solution_tree != nullptr) {
+                polygon_tree_rebuild_access::cancel(*solution_tree);
+            }
             throw;
         }
     }
@@ -153,14 +164,17 @@ auto offset_builder::execute() const -> Paths64 {
 }
 
 auto offset_builder::execute_into(Paths64& solution) const -> void {
-    solution.clear();
     impl_->execute(solution, nullptr);
 }
 
 auto offset_builder::execute_into(PolyTree64& solution) const -> void {
-    solution.clear();
-    Paths64 scratch;
-    impl_->execute(scratch, &solution);
+    try {
+        Paths64 scratch;
+        impl_->execute(scratch, &solution);
+    } catch (...) {
+        polygon_tree_rebuild_access::cancel(solution);
+        throw;
+    }
 }
 
 }  // namespace clipper2next

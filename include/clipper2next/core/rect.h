@@ -4,6 +4,7 @@
 #include "clipper2next/geotypes/rect.hpp"
 
 #include <ostream>
+#include <type_traits>
 
 namespace clipper2next {
 
@@ -97,7 +98,12 @@ template <typename T>
 template <typename Target, typename Source>
 [[nodiscard]] inline auto scale_rect_coordinate(Source coordinate,
                                                 double scale) -> Target {
-    return geotypes::coordinateCast<Target>(coordinate * scale);
+    if constexpr (std::is_integral_v<Target> && std::is_floating_point_v<Source>) {
+        return geotypes::coordinateCast<Target>(
+            coordinate * scale, geotypes::CoordinateRounding::NearestAwayFromZero);
+    } else {
+        return geotypes::truncatingCoordinateCast<Target>(coordinate * scale);
+    }
 }
 
 template <typename T>

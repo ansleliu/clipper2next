@@ -152,6 +152,32 @@ def _integer(value: Any, context: str) -> int:
 
 
 def _validate_runtime_evidence(payload: dict[str, Any]) -> None:
+    from tools.release.collect_release_runtime_evidence import (
+        build_runtime_evidence,
+        runtime_projection,
+    )
+    from tools.release.correction_run import verify_file
+
+    if payload.get("schema_version") != 2 or not isinstance(
+        payload.get("producer_manifest"), dict
+    ):
+        raise ValueError(
+            "release admission requires same-run schema2 producer evidence"
+        )
+    verify_file(payload["producer_manifest"])
+    verified = build_runtime_evidence(
+        producer_manifest=Path(payload["producer_manifest"]["path"]),
+        repository_root=Path(payload["source"]["root"]),
+    )
+    if verified != payload:
+        raise ValueError("runtime evidence differs from its validated producer")
+    view = runtime_projection(verified)
+    payload.clear()
+    payload.update(view)
+    _validate_runtime_view(payload)
+
+
+def _validate_runtime_view(payload: dict[str, Any]) -> None:
     _exact_fields(payload, _RUNTIME_FIELDS, "runtime evidence")
     _schema_version_one(payload["schema_version"], "runtime evidence")
     contract_sha256 = _sha256_string(

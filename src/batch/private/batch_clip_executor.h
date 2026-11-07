@@ -33,10 +33,6 @@ struct clip_batch_work_profile final {
     -> clip_batch_work_profile;
 [[nodiscard]] auto clip_batch_requests_have_uniform_shape(
     std::span<const clip_request64> requests) -> bool;
-[[nodiscard]] auto clip_batch_requests_are_parallel_safe(
-    std::span<const clip_request64> requests) -> bool;
-[[nodiscard]] auto clip_batch_requests_are_parallel_safe(
-    std::span<const prepared_clip_request64> requests) -> bool;
 [[nodiscard]] auto clip_batch_work_profiles_are_uniform(
     std::span<const clip_batch_work_profile> profiles) -> bool;
 [[nodiscard]] auto build_clip_batch_work_order(std::span<const clip_batch_work_profile> profiles)

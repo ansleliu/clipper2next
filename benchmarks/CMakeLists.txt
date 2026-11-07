@@ -121,8 +121,32 @@ if(CLIPPER2NEXT_BUILD_ORACLE)
     clipper2next_add_external_corpus_benchmark(
       clipper2next_bench_external_corpus
       oracle/external_corpus_benchmark.cpp)
+    target_sources(clipper2next_bench_external_corpus PRIVATE
+      ${PROJECT_SOURCE_DIR}/packaging/test_package/correction_contract.cpp
+      ${PROJECT_SOURCE_DIR}/tests/oracle/offset_contract.cpp
+      ${PROJECT_SOURCE_DIR}/tests/oracle/triangulation_contract.cpp)
+    target_link_libraries(clipper2next_bench_external_corpus PRIVATE ${CMAKE_DL_LIBS})
+    target_compile_definitions(clipper2next_bench_external_corpus PRIVATE
+      CLIPPER2NEXT_DEFAULT_GEOMETRY_CORPUS_ROOT="${CLIPPER2NEXT_SELECTED_CORPUS_ROOT}"
+      CLIPPER2NEXT_OFFSET_CONTRACT_SOURCE="${PROJECT_SOURCE_DIR}/tests/offset/offset_contract_cases.jsonl")
     clipper2next_target_msvc_external_pgo(
       clipper2next_bench_external_corpus BENCHMARK)
+    if(CLIPPER2NEXT_TESTS)
+      find_package(Python3 REQUIRED COMPONENTS Interpreter)
+      add_test(NAME clipper2next_triangulation_contract_oracle_benchmark
+        COMMAND "${Python3_EXECUTABLE}" "${CLIPPER2NEXT_TRIANGULATION_PREFLIGHT}"
+          --producer "$<TARGET_FILE:clipper2next_bench_external_corpus>"
+          --producer-argument=--clipper2next_triangulation_records --expected-count 240
+          --timing-argument=--benchmark_min_time=1x
+          --timing-argument=--benchmark_repetitions=1
+          ${CLIPPER2NEXT_CORPUS_PREFLIGHT_ARGS} --case-set benchmark
+          --output-dir "${CMAKE_CURRENT_BINARY_DIR}/triangulation-contract-benchmark")
+      add_test(NAME clipper2next_offset_contract_oracle_benchmark
+        COMMAND "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/release/run_offset_contract_preflight.py"
+          --producer "$<TARGET_FILE:clipper2next_bench_external_corpus>"
+          --producer-argument=--clipper2next_offset_records
+          --output-dir "${CMAKE_CURRENT_BINARY_DIR}/offset-contract-benchmark")
+    endif()
 
     set(clipper2next_oracle_benchmark_targets
       clipper2next_bench_legacy_vs_next_clip

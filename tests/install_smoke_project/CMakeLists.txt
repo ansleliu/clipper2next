@@ -8,11 +8,14 @@ if(NOT TARGET clipper2next::geotypes)
   message(FATAL_ERROR "clipper2next package did not export clipper2next::geotypes")
 endif()
 
-add_executable(clipper2next_install_smoke main.cpp)
+set(correction_contract "${CMAKE_CURRENT_LIST_DIR}/../../packaging/test_package")
+add_executable(clipper2next_install_smoke main.cpp "${correction_contract}/correction_contract.cpp")
+target_include_directories(clipper2next_install_smoke PRIVATE "${correction_contract}")
 target_link_libraries(clipper2next_install_smoke
   PRIVATE
     clipper2next::geotypes
     clipper2next::clipper2next
+    ${CMAKE_DL_LIBS}
 )
 target_compile_features(clipper2next_install_smoke PRIVATE cxx_std_23)
 

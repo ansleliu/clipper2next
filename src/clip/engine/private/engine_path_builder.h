@@ -19,10 +19,4 @@ namespace clipper2next::internal {
                                      bool reverse,
                                      bool is_open,
                                      std::span<geotypes::Point2i64> path) -> bool;
-[[nodiscard]] auto build_pathd(output_point_node* output_point,
-                               bool reverse,
-                               bool is_open,
-                               PathD& path,
-                               double inverse_scale) -> bool;
-
 }  // namespace clipper2next::internal

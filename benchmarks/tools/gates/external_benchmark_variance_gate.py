@@ -14,6 +14,7 @@ from benchmarks.tools.common.release_gate_policy import (
     EXTERNAL_CORE_TIME_FIELD,
     coefficient_of_variation_percent,
 )
+from benchmarks.tools.common.external_core_measurement import load_median_records
 
 
 def ensure_parent(path: Path) -> None:
@@ -26,6 +27,7 @@ def load_benchmarks(path: Path) -> list[dict]:
     benchmarks = payload.get("benchmarks")
     if not isinstance(benchmarks, list):
         raise ValueError(f"benchmark JSON has no benchmark list: {path}")
+    load_median_records(payload, time_field=EXTERNAL_CORE_TIME_FIELD)
     return benchmarks
 
 
@@ -170,6 +172,8 @@ def main() -> int:
         rows = external_cv_rows(load_benchmarks(Path(args.candidate)))
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(str(error), file=sys.stderr)
+        write_reports(output_md=args.output_md, output_json=args.output_json, status="FAIL",
+                      max_cv_percent=args.max_cv_percent, rows=[], reason=str(error))
         return 1
 
     if not rows and not args.require_core_benchmarks:

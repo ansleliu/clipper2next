@@ -1,8 +1,21 @@
 #include "triangulation/private/triangulation_context.h"
+#include "support/private/storage/release_vector.h"
 
 namespace clipper2next::internal {
 
-auto triangulation_context::clear() -> void {
+auto prepare_triangulation_predicate_domain(const triangulation_context& context)
+    -> triangulation_predicate_domain {
+    return triangulation_predicate_domain::from_points(context.vertices.size(),
+        [&](std::size_t i) { return context.vertices[i]->pt; });
+}
+
+auto triangulation_context::clear() noexcept -> void {
+    source_rings.clear();
+    monotone.clear();
+    partition_vertices.clear();
+    partition_path.clear();
+    partition_sides.clear();
+    partition_faces.clear();
     vertex_pool.clear();
     edge_scratch.release();
     edge_pool.clear();
@@ -11,25 +24,32 @@ auto triangulation_context::clear() -> void {
     edges.clear();
     triangles.clear();
     pending_delaunay.clear();
-    horizontal_edges.clear();
+    source_paths.clear();
+    boundary_events.clear();
     local_minima.clear();
-    lowermost_vertex = nullptr;
     first_active = nullptr;
     internal_error = false;
 }
 
 auto triangulation_context::release() noexcept -> void {
     clear();
+    // Return auxiliary directories before their cleared backing node storage.
+    release_vector(vertices);
+    release_vector(triangles);
+    release_vector(local_minima);
+    release_vector(partition_vertices);
+    release_vector(partition_path);
+    release_vector(partition_sides);
+    release_vector(partition_faces);
+    source_paths.release();
+    release_vector(boundary_events);
+    release_vector(edges);
+    release_vector(pending_delaunay);
+    source_rings.release();
+    monotone.release();
     vertex_pool.release();
     edge_pool.release();
     triangle_pool.release();
-
-    triangulation_vertex_list{}.swap(vertices);
-    triangulation_triangle_list{}.swap(triangles);
-    triangulation_vertex_list{}.swap(local_minima);
-    triangulation_edge_list{edges.get_allocator().resource()}.swap(edges);
-    triangulation_edge_list{pending_delaunay.get_allocator().resource()}.swap(pending_delaunay);
-    triangulation_edge_list{horizontal_edges.get_allocator().resource()}.swap(horizontal_edges);
 }
 
 auto create_triangulation_vertex(triangulation_context& context, const Point64& point)

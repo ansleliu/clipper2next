@@ -28,10 +28,10 @@ auto add_trial_horizontal_join(HorzSegmentList& horizontal_segments,
                                output_point_node* output_point) -> void;
 
 auto convert_horizontal_segments_to_joins(HorzSegmentList& horizontal_segments,
-                                          std::vector<horizontal_join_node>& horizontal_joins)
+                                          engine_buffer<horizontal_join_node>& horizontal_joins)
     -> void;
 
-auto process_horizontal_joins(std::vector<horizontal_join_node>& horizontal_joins,
+auto process_horizontal_joins(engine_buffer<horizontal_join_node>& horizontal_joins,
                               engine_output_owner& output_owner,
                               bool using_polytree) -> void;
 

@@ -4,10 +4,6 @@
 
 namespace clipper2next::internal {
 
-[[nodiscard]] auto ShortestDistFromSegment(const Point64& point,
-                                           const Point64& segment_start,
-                                           const Point64& segment_end) -> double;
-
 [[nodiscard]] auto SegsIntersect(Point64 segment1_start,
                                  Point64 segment1_end,
                                  Point64 segment2_start,

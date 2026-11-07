@@ -8,6 +8,15 @@
 namespace next = clipper2next;
 namespace test = clipper2next::tests;
 
+TEST(Clipper2NextOffsetGroupTests, CorrectionThinTriangleOrientationIsTranslationInvariant) {
+    for (const std::int64_t y : {0LL, 10'000'000'000LL}) {
+        next::internal::offset_group group{next::Paths64{{{0, y}, {1000003, y + 1}, {1000002, y + 1}}},
+            next::JoinType::Bevel, next::EndType::Polygon};
+        EXPECT_TRUE(group.lowest_path_index.has_value());
+        EXPECT_FALSE(group.is_reversed);
+    }
+}
+
 namespace {
 
 [[nodiscard]] auto make_batched_paths(
@@ -56,7 +65,6 @@ TEST(Clipper2NextOffsetGroupTests, OffsetGroupOwnsCleanedInputPaths) {
 
 TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedPolygonGolden) {
     next::internal::offset_state state;
-    state.delta = 2.0;
     next::internal::offset_group group{next::Paths64{test::path64({0, 0, 20, 0, 20, 20, 0, 20})},
                                        next::JoinType::Miter,
                                        next::EndType::Polygon};
@@ -66,6 +74,7 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedPolygonGolden)
         group,
         group.path(0U),
         next::internal::offset_group_execution_options{2.0, 0.0, 0U, false},
+        2.0,
         nullptr);
 
     const next::Paths64 expected{
@@ -77,7 +86,6 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedPolygonGolden)
 TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedOpenAndDegenerateGoldens) {
     {
         next::internal::offset_state state;
-        state.delta = 2.0;
         next::internal::offset_group group{next::Paths64{test::path64({0, 0, 20, 0, 20, 20})},
                                            next::JoinType::Miter,
                                            next::EndType::Joined};
@@ -86,6 +94,7 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedOpenAndDegener
             group,
             group.path(0U),
             next::internal::offset_group_execution_options{2.0, 0.0, 0U, false},
+        2.0,
             nullptr);
         const next::Paths64 expected{
             test::path64({-2, 0, -1, -2, 22, -2, 22, 21, 20, 22}),
@@ -95,7 +104,6 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedOpenAndDegener
     }
     {
         next::internal::offset_state state;
-        state.delta = 2.0;
         next::internal::offset_group group{
             next::Paths64{test::path64({5, 5})}, next::JoinType::Miter, next::EndType::Polygon};
         const auto result = next::internal::build_offset_path_result(
@@ -103,6 +111,7 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedOpenAndDegener
             group,
             group.path(0U),
             next::internal::offset_group_execution_options{2.0, 0.0, 0U, false},
+        2.0,
             nullptr);
         const next::Paths64 expected{
             test::path64({3, 3, 7, 3, 7, 7, 3, 7}),
@@ -111,7 +120,6 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedOpenAndDegener
     }
     {
         next::internal::offset_state state;
-        state.delta = 2.0;
         next::internal::offset_group group{next::Paths64{test::path64({0, 0, 20, 0})},
                                            next::JoinType::Miter,
                                            next::EndType::Joined};
@@ -120,6 +128,7 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedOpenAndDegener
             group,
             group.path(0U),
             next::internal::offset_group_execution_options{2.0, 0.0, 0U, false},
+        2.0,
             nullptr);
         const next::Paths64 expected{
             test::path64({-2, 2, -2, -2, 22, -2, 22, 2}),
@@ -130,7 +139,6 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedOpenAndDegener
 
 TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedRoundJoinGolden) {
     next::internal::offset_state state;
-    state.delta = 3.0;
     next::internal::offset_group group{next::Paths64{test::path64({0, 0, 20, 0, 20, 20, 0, 20})},
                                        next::JoinType::Round,
                                        next::EndType::Polygon};
@@ -140,6 +148,7 @@ TEST(Clipper2NextOffsetGroupTests, OffsetPathResultMatchesRecordedRoundJoinGolde
         group,
         group.path(0U),
         next::internal::offset_group_execution_options{2.0, 1.0, 0U, false},
+        3.0,
         nullptr);
 
     const next::Paths64 expected{
@@ -154,13 +163,11 @@ TEST(Clipper2NextOffsetGroupTests, OffsetGroupParallelPathMatchesSequentialOutpu
     const next::internal::offset_group_execution_options options{2.0, 0.0, false};
 
     next::internal::offset_state sequential_state;
-    sequential_state.delta = 2.0;
     next::Paths64 sequential_output;
     next::internal::build_offset_group_paths(
-        sequential_state, group, options, nullptr, sequential_output);
+        sequential_state, group, options, 2.0, nullptr, sequential_output);
 
     next::internal::offset_state parallel_state;
-    parallel_state.delta = 2.0;
     next::Paths64 parallel_output;
     next::internal::build_offset_group_paths_parallel(
         parallel_state, group, options, 2.0, {}, parallel_output);

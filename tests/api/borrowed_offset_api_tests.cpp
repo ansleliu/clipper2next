@@ -1,5 +1,7 @@
 #include "clipper2next/offset.h"
+#include "clipper2next/geometry.h"
 #include "clipper2next/api/execution.h"
+#include "clipper2next/api/memory.h"
 #include "geometry/private/path_simplicity.h"
 #include "support/path_equivalence.h"
 
@@ -12,6 +14,9 @@
 #include <limits>
 #include <numbers>
 #include <thread>
+#include <functional>
+#include <stdexcept>
+#include "offset/private/offset_thread_state.h"
 #include <vector>
 
 namespace next = clipper2next;
@@ -658,4 +663,398 @@ TEST(Clipper2NextBorrowedOffsetApiTests, InsufficientConcurrencyRemainsSerial) {
 
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(executor_state.invocation_count, 0U);
+}
+
+namespace {
+struct reentering_executor {
+    bool nested{};
+    std::size_t calls{};
+};
+auto execute_reentering(void* opaque, std::size_t count, std::size_t,
+                       std::size_t, next::bulk_task_ref task) noexcept
+    -> next::bulk_execution_error {
+    auto& executor = *static_cast<reentering_executor*>(opaque);
+    ++executor.calls;
+    try {
+        if (executor.nested) {
+            auto request = next::offset_request64{};
+            request.paths = {{{0, 0}, {100, 0}, {100, 100}, {0, 100}}};
+            request.delta = 50;
+            if (!next::offset_checked(request)) { return next::bulk_execution_error::scheduler_failure; }
+        } else {
+            next::release_thread_caches();
+            next::release_thread_caches();
+        }
+        for (std::size_t index = 0; index < count; ++index) { task(index, index + 1); }
+        return next::bulk_execution_error::none;
+    } catch (...) { return next::bulk_execution_error::scheduler_failure; }
+}
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, SynchronousExecutorReentryPreservesFollowingGroup) {
+    const auto dense = parallel_eligible_source();
+    const auto square = foreign_paths{rectangle(2'000'000, 0, 2'000'100, 100)};
+    const next::borrowed_offset_group64 groups[]{
+        {next::borrow_paths64(dense), next::JoinType::Round, next::EndType::Polygon},
+        {next::borrow_paths64(square), next::JoinType::Round, next::EndType::Polygon}};
+    const auto request = next::borrowed_offset_request64{.groups = groups, .delta = 5};
+    const auto serial = next::offset_stage_checked(request);
+    ASSERT_TRUE(serial);
+    for (const bool nested : {false, true}) {
+        auto executor = reentering_executor{nested};
+        const auto actual = next::offset_stage_checked(request, {&executor, 16, &execute_reentering});
+        ASSERT_TRUE(actual);
+        EXPECT_GT(executor.calls, 0U);
+        EXPECT_EQ(materialize(actual->paths), materialize(serial->paths));
+        const auto bounds = next::bounds(materialize(actual->paths).back());
+        EXPECT_EQ(bounds.left, 1'999'995);
+        EXPECT_EQ(bounds.right, 2'000'105);
+    }
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, MixedJoinedPathsExecuteParallelAndSurviveReentry) {
+    auto source = parallel_eligible_source();
+    for (std::size_t i = 0; i < source.size(); ++i) {
+        source[i] = dense_rectangle(static_cast<std::int64_t>(i) * 2'000, 0, 300);
+    }
+    for (std::size_t i = 0; i < source.size(); i += 8) {
+        const auto x = static_cast<std::int64_t>(i) * 2'000;
+        source[i] = {{x, 0}, {x + 100, 0}};
+    }
+    const auto group = next::borrowed_offset_group64{
+        next::borrow_paths64(source), next::JoinType::Round, next::EndType::Joined};
+    const auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5};
+    const auto serial = next::offset_stage_checked(request);
+    ASSERT_TRUE(serial);
+    auto executor = reentering_executor{true};
+    const auto actual = next::offset_stage_checked(request, {&executor, 16, &execute_reentering});
+    ASSERT_TRUE(actual);
+    EXPECT_GT(executor.calls, 0U);
+    EXPECT_EQ(materialize(actual->paths), materialize(serial->paths));
+}
+
+namespace {
+struct callback_offset_source {
+    next::Paths64 paths;
+    std::function<void()> on_size;
+    auto begin() const { return paths.begin(); }
+    auto end() const { return paths.end(); }
+    auto size() const { on_size(); return paths.size(); }
+};
+}
+TEST(Clipper2NextBorrowedOffsetApiTests, SourceCardinalityLeaseReentryFailureAndRetry) {
+    next::internal::offset_state* cached;
+    { auto lease = next::internal::offset_state_lease{}; cached = &lease.state(); }
+    bool callback_seen = false;
+    bool reject = false;
+    callback_offset_source source{{{{0, 0}, {100, 0}, {100, 100}, {0, 100}}}, [&] {
+        callback_seen = true;
+        auto nested = next::internal::offset_state_lease{};
+        EXPECT_NE(&nested.state(), cached);
+        next::release_thread_caches();
+        if (reject) { throw std::runtime_error("source failed"); }
+    }};
+    const auto group = next::borrowed_offset_group64{next::borrow_paths64(source), next::JoinType::Miter, next::EndType::Polygon};
+    const auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5};
+    ASSERT_TRUE(next::offset_stage_checked(request));
+    EXPECT_TRUE(callback_seen);
+    reject = true;
+    EXPECT_FALSE(next::offset_stage_checked(request));
+    reject = false;
+    const auto retried = next::offset_stage_checked(request);
+    ASSERT_TRUE(retried);
+    ASSERT_EQ(retried->paths.size(), 1U);
+    EXPECT_EQ(next::bounds(materialize(retried->paths)).left, -5);
+    EXPECT_EQ(next::bounds(materialize(retried->paths)).right, 105);
+}
+
+#include "api/private/borrowed_offset_execution.h"
+#include "api/private/checked_execution.h"
+#include "offset/private/offset_group.h"
+#include <array>
+
+namespace {
+auto observed_offset(const next::borrowed_offset_request64& request,
+                     next::internal::offset_engine_resource_context& resources,
+                     next::sync_bulk_executor_ref executor = {})
+    -> next::expected_borrowed_offset_stage_result64 {
+    return next::internal::checked_call<next::borrowed_offset_stage_result64>([&] {
+        resources.reset_usage();
+        resources.generation = {};
+        resources.selected = {};
+        return next::internal::execute_borrowed_offset_stage(request, executor, resources);
+    });
+}
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, CompleteLedgerExactStageLimitsAndCleanupFailureRetry) {
+    const next::Paths64 paths{{{0, 0}, {100, 0}, {100, 100}, {0, 100}},
+                             {{50, 0}, {150, 0}, {150, 100}, {50, 100}}};
+    const auto group = next::borrowed_offset_group64{next::borrow_paths64(paths), next::JoinType::Round, next::EndType::Polygon};
+    auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 10, .arc_segments_per_quadrant = 8};
+    auto reference_context = next::internal::offset_engine_resource_context{};
+    const auto reference = observed_offset(request, reference_context);
+    ASSERT_TRUE(reference);
+    ASSERT_GT(reference_context.work, reference_context.generation.work);
+    std::printf("T09 cleanup work=%zu generation=%zu engine_peak=%zu stage_peak=%zu plan=%zu live=%zu/%zu\n",
+        reference_context.work, reference_context.generation.work, reference_context.engine_high_water,
+        reference_context.staging_high_water, reference->stats.planned_engine_workspace_bytes,
+        reference_context.engine_bytes, reference_context.staging_bytes);
+    EXPECT_EQ(reference_context.work, reference->stats.planned_engine_work);
+    EXPECT_EQ(reference_context.staging_high_water, reference->stats.peak_workspace_bytes);
+    EXPECT_LE(reference_context.engine_high_water, reference->stats.planned_engine_workspace_bytes);
+    EXPECT_EQ(reference_context.engine_bytes, 0U);
+    EXPECT_EQ(reference_context.staging_bytes, 0U);
+    for (bool cold : {true, false}) {
+        if (cold) { next::release_thread_caches(); }
+        request.limits.maximum_staging_workspace_bytes = reference_context.staging_high_water;
+        request.limits.maximum_engine_work = reference->stats.planned_engine_work;
+        request.limits.maximum_engine_workspace_bytes = reference->stats.planned_engine_workspace_bytes;
+        auto exact_context = next::internal::offset_engine_resource_context{};
+        auto exact = observed_offset(request, exact_context);
+        ASSERT_TRUE(exact);
+        EXPECT_EQ(materialize(exact->paths), materialize(reference->paths));
+        EXPECT_EQ(exact_context.staging_high_water, reference_context.staging_high_water);
+        --request.limits.maximum_staging_workspace_bytes;
+        auto failed_context = next::internal::offset_engine_resource_context{};
+        const auto failed = observed_offset(request, failed_context);
+        ASSERT_FALSE(failed);
+        EXPECT_EQ(failed.error(), next::clipper_error_code::resource_limit);
+        EXPECT_GT(failed_context.work, failed_context.generation.work);
+        EXPECT_GT(failed_context.engine_high_water, 0U);
+        EXPECT_EQ(failed_context.staging_bytes, 0U);
+        EXPECT_EQ(failed_context.engine_bytes, 0U);
+    }
+    request.limits = {};
+    ASSERT_TRUE(next::offset_stage_checked(request));
+    next::release_thread_caches();
+
+    // Point construction is committed before source copying, and descriptor
+    // admission happens afterward without retaining any consumed headroom.
+    struct observed_paths_range {
+        next::Paths64 paths;
+        std::function<void()> inspect;
+        auto begin() const { inspect(); return paths.begin(); }
+        auto end() const { return paths.end(); }
+        auto size() const { return paths.size(); }
+    };
+    const auto measurement_bytes = sizeof(next::path_source_contract::borrowed_path_measurement64);
+    const auto point_prefix = measurement_bytes + 4U * sizeof(next::Point64);
+    for (const auto limit : std::array<std::size_t, 3>{point_prefix - 1U, point_prefix,
+             point_prefix + sizeof(next::internal::offset_path_record) - 1U}) {
+        auto context = next::internal::offset_engine_resource_context{};
+        bool copied = false;
+        observed_paths_range source{{{{0,0},{100,0},{100,100},{0,100}}}, [&] {
+            if (context.staging_bytes >= point_prefix) {
+                copied = true;
+                EXPECT_EQ(context.staging_bytes, point_prefix);
+                EXPECT_EQ(context.reserved_staging_bytes, 0U);
+            }
+        }};
+        const auto traced_group = next::borrowed_offset_group64{
+            next::borrow_paths64(source), next::JoinType::Miter, next::EndType::Polygon};
+        auto traced_request = next::borrowed_offset_request64{
+            .groups = std::span{&traced_group, 1U}, .delta = 0};
+        traced_request.limits.maximum_staging_workspace_bytes = limit;
+        const auto failed = observed_offset(traced_request, context);
+        ASSERT_FALSE(failed);
+        EXPECT_EQ(failed.error(), next::clipper_error_code::resource_limit);
+        EXPECT_EQ(copied, limit >= point_prefix);
+        EXPECT_EQ(context.staging_high_water,
+                  limit >= point_prefix ? point_prefix : measurement_bytes);
+        EXPECT_EQ(context.work, 0U);
+        EXPECT_EQ(context.staging_bytes, 0U);
+        EXPECT_EQ(context.reserved_staging_bytes, 0U);
+    }
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, FinalOutputLimitDoesNotCapRawGeneration) {
+    const next::Paths64 paths{{{0, 0}, {100, 0}, {100, 100}, {0, 100}},
+                             {{0, 0}, {100, 0}, {100, 100}, {0, 100}}};
+    const auto group = next::borrowed_offset_group64{next::borrow_paths64(paths), next::JoinType::Miter, next::EndType::Polygon};
+    auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5};
+    request.limits.maximum_output_path_count = 1;
+    request.limits.maximum_output_point_count = 4;
+    auto context = next::internal::offset_engine_resource_context{};
+    const auto result = observed_offset(request, context);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->paths.size(), 1U);
+    EXPECT_EQ(result->paths.point_count(), 4U);
+    EXPECT_GT(context.work, context.generation.work);
+    EXPECT_EQ(context.engine_bytes, 0U);
+    EXPECT_EQ(context.staging_bytes, 0U);
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, CleanupPlanWorkAndBytesRejectOneUnderAfterRealGeneration) {
+    const next::Paths64 paths{{{0, 0}, {100, 0}, {100, 100}, {0, 100}},
+                             {{50, 0}, {150, 0}, {150, 100}, {50, 100}}};
+    const auto group = next::borrowed_offset_group64{next::borrow_paths64(paths), next::JoinType::Miter, next::EndType::Polygon};
+    auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 10};
+    auto context = next::internal::offset_engine_resource_context{};
+    const auto baseline = observed_offset(request, context);
+    ASSERT_TRUE(baseline);
+    ASSERT_GT(context.work, context.generation.work);
+    const auto work = baseline->stats.planned_engine_work;
+    const auto bytes = baseline->stats.planned_engine_workspace_bytes;
+    for (bool limit_work : {true, false}) {
+        request.limits.maximum_engine_work = work - static_cast<std::size_t>(limit_work);
+        request.limits.maximum_engine_workspace_bytes = bytes - static_cast<std::size_t>(!limit_work);
+        const auto limited = observed_offset(request, context);
+        ASSERT_FALSE(limited);
+        EXPECT_EQ(limited.error(), next::clipper_error_code::resource_limit);
+        EXPECT_GT(context.engine_high_water, 0U);
+        EXPECT_EQ(context.work, context.generation.work);
+        EXPECT_EQ(context.engine_bytes, 0U);
+        EXPECT_EQ(context.staging_bytes, 0U);
+        request.limits.maximum_engine_work = work;
+        request.limits.maximum_engine_workspace_bytes = bytes;
+        const auto retry = observed_offset(request, context);
+        ASSERT_TRUE(retry);
+        EXPECT_EQ(materialize(retry->paths), materialize(baseline->paths));
+    }
+}
+
+#include "offset/private/offset_group_processor.h"
+TEST(Clipper2NextBorrowedOffsetApiTests, RealParallelMergeChargesDestinationWhileChunksRemainLive) {
+    const auto source = parallel_eligible_source();
+    auto prototype = next::Path64{};
+    for (const auto point : source.front()) { prototype.emplace_back(point.x, point.y); }
+    const auto native = next::internal::offset_group{next::Paths64{prototype}, next::JoinType::Miter, next::EndType::Polygon};
+    auto state = next::internal::offset_state{};
+    auto raw = next::path_set64{};
+    next::internal::build_offset_group_paths(state, native, {}, 5, nullptr, raw);
+    ASSERT_EQ(raw.size(), 1U);
+    const auto one_raw = raw.point_count() * sizeof(next::Point64) + sizeof(geotypes::PathDescriptor);
+    const auto group = next::borrowed_offset_group64{next::borrow_paths64(source), next::JoinType::Miter, next::EndType::Polygon};
+    const auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5};
+    auto root = next::internal::offset_engine_resource_context{};
+    auto executor = recording_executor{};
+    const auto result = observed_offset(request, root, {&executor, 16, &execute_recorded_chunks});
+    ASSERT_TRUE(result);
+    ASSERT_EQ(executor.item_count, 64U);
+    // 512 equal-size real paths form 64 chunks of 8. Sequential worker
+    // scheduling has a smaller scratch peak; merge grows all 8 destination
+    // paths before releasing that consumed chunk.
+    EXPECT_EQ(root.engine_high_water, (512U + 8U) * one_raw);
+    std::printf("T09 parallel merge raw_per_path=%zu actual_peak=%zu live=%zu/%zu reserved=%zu\n",
+        one_raw, root.engine_high_water, root.engine_bytes, root.staging_bytes, root.reserved_engine_bytes);
+    EXPECT_EQ(root.reserved_engine_bytes, 0U);
+    EXPECT_EQ(root.engine_bytes, 0U);
+    EXPECT_EQ(root.staging_bytes, 0U);
+    EXPECT_LE(root.engine_high_water, result->stats.planned_engine_workspace_bytes);
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, ThreadedWorkerFailureQuiescesAndReleasesReservationBeforeRetry) {
+    auto source = parallel_eligible_source();
+    source.back() = dense_rectangle(next::MAX_COORD - 256, 0, 256);
+    const auto group = next::borrowed_offset_group64{next::borrow_paths64(source), next::JoinType::Miter, next::EndType::Polygon};
+    const auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5};
+    auto root = next::internal::offset_engine_resource_context{};
+    auto executor = threaded_executor{.worker_count = 16};
+    const auto ref = next::sync_bulk_executor_ref{&executor, 16, &execute_threaded_chunks};
+    const auto failed = observed_offset(request, root, ref);
+    ASSERT_FALSE(failed);
+    EXPECT_EQ(failed.error(), next::clipper_error_code::coordinate_range);
+    EXPECT_GT(executor.invocation_count.load(), 0U);
+    EXPECT_GT(root.engine_high_water, 0U);
+    std::printf("T09 worker failure engine_peak=%zu stage_peak=%zu live=%zu/%zu reserved=%zu\n",
+        root.engine_high_water, root.staging_high_water, root.engine_bytes, root.staging_bytes, root.reserved_engine_bytes);
+    EXPECT_EQ(root.reserved_engine_bytes, 0U);
+    EXPECT_EQ(root.engine_bytes, 0U);
+    EXPECT_EQ(root.staging_bytes, 0U);
+    source.back() = dense_rectangle(511 * 2000, 0, 256);
+    const auto retry = observed_offset(request, root, ref);
+    ASSERT_TRUE(retry);
+    EXPECT_EQ(retry->paths.size(), 512U);
+    EXPECT_EQ(retry->paths.point_count(), 2048U);
+    EXPECT_EQ(root.reserved_engine_bytes, 0U);
+    EXPECT_EQ(root.engine_bytes, 0U);
+    EXPECT_EQ(root.staging_bytes, 0U);
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, SkewedParallelPathsReuseReportedExactBudget) {
+    auto source = foreign_paths{};
+    for (std::int64_t i = 0; i < 512; ++i) {
+        source.push_back(i < 64 ? dense_rectangle(i * 10000, 0, 2048)
+                                : rectangle(i * 10000, 0, i * 10000 + 100, 100));
+    }
+    const auto group = next::borrowed_offset_group64{next::borrow_paths64(source), next::JoinType::Miter, next::EndType::Polygon};
+    auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5};
+    auto root = next::internal::offset_engine_resource_context{};
+    auto executor = recording_executor{};
+    const auto ref = next::sync_bulk_executor_ref{&executor, 16, &execute_recorded_chunks};
+    const auto baseline = observed_offset(request, root, ref);
+    ASSERT_TRUE(baseline);
+    request.limits.maximum_engine_workspace_bytes = baseline->stats.planned_engine_workspace_bytes;
+    const auto exact = observed_offset(request, root, ref);
+    ASSERT_TRUE(exact);
+    EXPECT_EQ(materialize(exact->paths), materialize(baseline->paths));
+    EXPECT_EQ(root.reserved_engine_bytes, 0U);
+    EXPECT_EQ(root.engine_bytes, 0U);
+    EXPECT_EQ(root.staging_bytes, 0U);
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, SerialGroupScratchEndsBeforeTheParallelPhase) {
+    using namespace next::internal;
+    const auto foreign = parallel_eligible_source();
+    auto paths = next::Paths64{};
+    for (const auto& source : foreign) {
+        auto& path = paths.emplace_back();
+        for (auto point : source) { path.emplace_back(point.x, point.y); }
+    }
+    const auto large = offset_group{std::move(paths), next::JoinType::Miter, next::EndType::Polygon};
+    auto small_path = next::Path64{};
+    for (auto point : dense_rectangle(-10000, 0, 1024)) { small_path.emplace_back(point.x, point.y); }
+    const auto small = offset_group{next::Paths64{std::move(small_path)}, next::JoinType::Miter, next::EndType::Polygon};
+    const auto prototype = offset_group{next::Paths64{next::Path64(large.path(0).begin(), large.path(0).end())},
+        next::JoinType::Miter, next::EndType::Polygon};
+    auto raw_one = next::path_set64{};
+    auto prototype_state = offset_state{};
+    build_offset_group_paths(prototype_state, prototype, {}, 5, nullptr, raw_one);
+    const auto one_raw = raw_one.point_count() * sizeof(next::Point64) + sizeof(geotypes::PathDescriptor);
+    auto root = execution_resource_ledger{};
+    {
+        auto output = next::path_set64{};
+        auto owner = scoped_workspace_charge{&root};
+        auto state = offset_state{};
+        auto scope = offset_resource_scope{state, &root, &owner};
+        build_offset_group_paths(state, small, {}, 5, nullptr, output);
+        const auto retained_small = owner.bytes();
+        ASSERT_FALSE(state.normals.empty());
+        ASSERT_FALSE(state.path_out.empty());
+        const auto plan = plan_offset_generation_resources(512, 512 * 1024, 1024, 5,
+            next::JoinType::Miter, next::EndType::Polygon, 0, 0, 16);
+        root.maximum_workspace_bytes = retained_small + plan.retained_output_bytes + 16U * plan.scratch_bytes;
+        auto executor = recording_executor{};
+        ASSERT_NO_THROW(build_offset_group_paths_parallel(state, large, {}, 5,
+            {&executor, 16, &execute_recorded_chunks}, output));
+        EXPECT_EQ(executor.item_count, 64U);
+        EXPECT_TRUE(state.normals.empty());
+        EXPECT_TRUE(state.path_out.empty());
+        EXPECT_EQ(root.engine_bytes, owner.bytes());
+        EXPECT_EQ(root.engine_high_water, retained_small + (512U + 8U) * one_raw);
+        EXPECT_EQ(root.reserved_engine_bytes, 0U);
+        EXPECT_EQ(root.reserved_staging_bytes, 0U);
+    }
+    EXPECT_EQ(root.engine_bytes, 0U);
+    EXPECT_EQ(root.staging_bytes, 0U);
+}
+
+TEST(Clipper2NextBorrowedOffsetApiTests, EmptyGroupsNeedNoGenerationBudget) {
+    for (const auto& paths : {next::Paths64{}, next::Paths64{next::Path64{}}}) {
+        const auto group = next::borrowed_offset_group64{next::borrow_paths64(paths), next::JoinType::Round, next::EndType::Round};
+        auto request = next::borrowed_offset_request64{.groups = std::span{&group, 1U}, .delta = 5};
+        request.limits.maximum_engine_workspace_bytes = 0;
+        request.limits.maximum_engine_work = 0;
+        if (paths.empty()) { request.limits.maximum_staging_workspace_bytes = 0; }
+        auto context = next::internal::offset_engine_resource_context{};
+        const auto result = observed_offset(request, context);
+        ASSERT_TRUE(result);
+        EXPECT_TRUE(result->paths.empty());
+        EXPECT_EQ(result->stats.planned_engine_work, 0U);
+        EXPECT_EQ(result->stats.planned_engine_workspace_bytes, 0U);
+        EXPECT_EQ(context.engine_high_water, 0U);
+        EXPECT_EQ(context.engine_bytes, 0U);
+        EXPECT_EQ(context.staging_bytes, 0U);
+    }
 }

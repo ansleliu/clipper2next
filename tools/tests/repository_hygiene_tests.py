@@ -161,12 +161,15 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn('"${CMAKE_CURRENT_LIST_DIR}/LICENSE_1_0.txt"', cmake)
         self.assertIn('"${CMAKE_CURRENT_LIST_DIR}/NOTICE.md"', cmake)
 
-    def test_retired_external_dependencies_are_absent(self) -> None:
+    def test_retired_product_dependencies_are_absent_from_exported_inputs(self) -> None:
+        from tools.release.source_inventory import exported_inventory
         offenders: list[tuple[str, int, str]] = []
-        for path in audited_files():
+        # Downstream qualification tooling observes RGAL's runtime dependencies;
+        # the product dependency boundary is its actual exported build input set.
+        paths = [REPO_ROOT / name for name in exported_inventory(REPO_ROOT)['files']]
+        paths.append(REPO_ROOT / 'vcpkg.json')
+        for path in paths:
             relative = path.relative_to(REPO_ROOT).as_posix()
-            if relative == "tools/tests/repository_hygiene_tests.py":
-                continue
             for line_number, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), 1
             ):

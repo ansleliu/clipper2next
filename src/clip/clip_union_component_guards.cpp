@@ -3,6 +3,7 @@
 #include "clipper2next/geometry.h"
 #include "clipper2next/geometry/core.h"
 #include "geometry/private/path_simplicity.h"
+#include "geometry/private/integer_area_sign.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -16,9 +17,9 @@ constexpr std::size_t direct_singleton_component_trim_limit = 64U;
 
 [[nodiscard]] auto path_matches_fill_rule(const Path64& path,
                                           const clip_union_options& options) -> bool {
-    const auto positive = is_positive(path);
-    return (options.fill_rule == FillRule::Positive && positive) ||
-           (options.fill_rule == FillRule::Negative && !positive);
+    const auto sign = signed_area_sign(path);
+    return (options.fill_rule == FillRule::Positive && sign > 0) ||
+           (options.fill_rule == FillRule::Negative && sign < 0);
 }
 
 [[nodiscard]] auto path_has_collinear_vertex(const Path64& path) noexcept -> bool {
@@ -81,7 +82,9 @@ auto try_return_singleton_component_direct(Path64& path, const clip_union_option
                                                        direct_singleton_component_scan_limit)) {
             return false;
         }
-        if (options.options.reverse_solution) { std::reverse(trimmed.begin(), trimmed.end()); }
+        if (options.options.reverse_solution != (options.fill_rule == FillRule::Negative)) {
+            std::reverse(trimmed.begin(), trimmed.end());
+        }
         path = std::move(trimmed);
         return true;
     }
@@ -89,7 +92,9 @@ auto try_return_singleton_component_direct(Path64& path, const clip_union_option
     if (!path_simplicity::path_is_provably_simple(path, direct_singleton_component_scan_limit)) {
         return false;
     }
-    if (options.options.reverse_solution) { std::reverse(path.begin(), path.end()); }
+    if (options.options.reverse_solution != (options.fill_rule == FillRule::Negative)) {
+        std::reverse(path.begin(), path.end());
+    }
     return true;
 }
 

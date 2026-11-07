@@ -53,7 +53,8 @@ auto maybe_attach_boundary_edge(rectclip_node_list* edges,
 }  // namespace
 
 auto check_edges(rectclip_node_list& results, rectclip_node_list* edges, const Rect64& rect)
-    -> void {
+    -> bool {
+    bool changed = false;
     for (std::size_t i = 0; i < results.size(); ++i) {
         rectclip_node* node = results[i].get();
         if (!node) { continue; }
@@ -61,6 +62,7 @@ auto check_edges(rectclip_node_list& results, rectclip_node_list* edges, const R
         do {
             auto& current = *cursor;
             if (is_collinear((*current.prev).pt, current.pt, (*current.next).pt)) {
+                changed = true;
                 cursor = unlink_node_back(current);
                 if (!cursor) { break; }
                 if (&current == node) { node = (*cursor).prev.get(); }
@@ -85,6 +87,7 @@ auto check_edges(rectclip_node_list& results, rectclip_node_list* edges, const R
             cursor = current.next.get();
         } while (cursor != node);
     }
+    return changed;
 }
 
 }  // namespace clipper2next::internal

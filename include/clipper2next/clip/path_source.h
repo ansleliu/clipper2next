@@ -3,6 +3,7 @@
 
 #include "clipper2next/api/error.h"
 #include "clipper2next/clip/types.h"
+#include "clipper2next/geometry/scaling_policy.h"
 
 #include <concepts>
 #include <cstddef>
@@ -82,7 +83,8 @@ template <typename Source>
 template <typename Source>
 [[nodiscard]] auto measure_borrowed_path(const void* source,
                                          std::size_t path_index,
-                                         borrowed_path_measurement64& result) noexcept
+                                         borrowed_path_measurement64& result,
+                                         std::size_t maximum_source_point_count) noexcept
     -> clipper_error_code {
     try {
         const auto& paths = *static_cast<const Source*>(source);
@@ -92,20 +94,21 @@ template <typename Source>
         const auto& path = *(std::ranges::begin(paths) + path_index);
         result = {};
         result.source_point_count = static_cast<std::size_t>(std::ranges::size(path));
+        if (result.source_point_count > maximum_source_point_count) {
+            return clipper_error_code::resource_limit;
+        }
 
         Point64 first{};
         Point64 last{};
-        bool has_point = false;
         for (const auto& source_point : path) {
             Point64 point{};
-            if (!point_to_point64(source_point, point)) {
+            if (!point_to_point64(source_point, point) ||
+                point.x < MIN_COORD || point.x > MAX_COORD ||
+                point.y < MIN_COORD || point.y > MAX_COORD) {
                 return clipper_error_code::coordinate_range;
             }
-            if (has_point && point == last) { continue; }
-            if (!has_point) {
-                first = point;
-                has_point = true;
-            }
+            if (result.normalized_point_count != 0U && point == last) { continue; }
+            if (result.normalized_point_count == 0U) { first = point; }
             last = point;
             ++result.normalized_point_count;
         }
@@ -143,7 +146,6 @@ template <typename Source>
         auto* destination_bytes = reinterpret_cast<std::byte*>(destination);
         Point64 first{};
         Point64 last{};
-        bool has_point = false;
         normalized_count = 0U;
         point_write_count = 0U;
         for (const auto& source_point : path) {
@@ -151,14 +153,11 @@ template <typename Source>
             if (!point_to_point64(source_point, point)) {
                 return clipper_error_code::coordinate_range;
             }
-            if (has_point && point == last) { continue; }
+            if (point_write_count != 0U && point == last) { continue; }
             if (point_write_count >= destination_capacity) {
                 return clipper_error_code::input_changed;
             }
-            if (!has_point) {
-                first = point;
-                has_point = true;
-            }
+            if (point_write_count == 0U) { first = point; }
             *reinterpret_cast<Point64*>(destination_bytes + point_write_count * destination_stride) =
                 point;
             last = point;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import os
 import stat
@@ -28,6 +29,29 @@ def load_build_install():
 
 
 class BuildInstallContractTests(unittest.TestCase):
+    def test_conan_recipes_keep_source_identity_after_build_deduplication(self) -> None:
+        for path in (
+            ROOT / "conanfile.py",
+            ROOT / "packaging/conan-center/conanfile.py.in",
+        ):
+            with self.subTest(recipe=path):
+                module = ast.parse(path.read_text(encoding="utf-8"))
+                recipe = next(
+                    node for node in module.body if isinstance(node, ast.ClassDef)
+                )
+                properties = {
+                    target.id: ast.literal_eval(node.value)
+                    for node in recipe.body
+                    if isinstance(node, ast.Assign)
+                    for target in node.targets
+                    if isinstance(target, ast.Name) and target.id == "no_copy_source"
+                }
+                self.assertIs(
+                    properties.get("no_copy_source"),
+                    True,
+                    "source identity must outlive a deduplicated package build",
+                )
+
     def test_release_identity_uses_consistent_public_metadata(self) -> None:
         module = load_build_install()
         self.assertIsNotNone(module, "build_install.py must own release orchestration")
@@ -35,7 +59,7 @@ class BuildInstallContractTests(unittest.TestCase):
         identity = module.read_release_identity(ROOT)
 
         self.assertEqual("clipper2next", identity.package_name)
-        self.assertEqual("6.1.1", identity.version)
+        self.assertEqual("7.0.1", identity.version)
         self.assertEqual(
             "https://github.com/ansleliu/clipper2next",
             identity.public_repository,
@@ -48,11 +72,11 @@ class BuildInstallContractTests(unittest.TestCase):
         identity = module.read_release_identity(ROOT)
 
         self.assertEqual(
-            "clipper2next/6.1.1@company/debug",
+            "clipper2next/7.0.1@company/debug",
             module.internal_reference(identity, "Debug", "company"),
         )
         self.assertEqual(
-            "clipper2next/6.1.1@company/release",
+            "clipper2next/7.0.1@company/release",
             module.internal_reference(identity, "Release", "company"),
         )
         with self.assertRaises(ValueError):
@@ -66,7 +90,7 @@ class BuildInstallContractTests(unittest.TestCase):
 
         reference = module.center_reference(identity)
 
-        self.assertEqual("clipper2next/6.1.1", reference)
+        self.assertEqual("clipper2next/7.0.1", reference)
         self.assertNotIn("@", reference)
 
     def test_center_source_rejects_private_or_unverified_archives(self) -> None:
@@ -97,7 +121,7 @@ class BuildInstallContractTests(unittest.TestCase):
                 homepage="https://github.com/ansleliu/clipper2next",
                 archive_url=(
                     "https://github.com/ansleliu/clipper2next/archive/refs/"
-                    "tags/v6.1.1.tar.gz"
+                    "tags/v7.0.1.tar.gz"
                 ),
                 archive_sha256="a" * 64,
             )
@@ -109,6 +133,8 @@ class BuildInstallContractTests(unittest.TestCase):
                 "all/test_package/CMakeLists.txt",
                 "all/test_package/conanfile.py",
                 "all/test_package/main.cpp",
+                "all/test_package/correction_contract.h",
+                "all/test_package/correction_contract.cpp",
             }
             actual = {
                 path.relative_to(stage).as_posix()
@@ -122,7 +148,7 @@ class BuildInstallContractTests(unittest.TestCase):
                 if path.is_file()
             )
             self.assertIn('name = "clipper2next"', combined)
-            self.assertIn('"6.1.1"', combined)
+            self.assertIn('"7.0.1"', combined)
             self.assertIn("clipper2next::geotypes", combined)
             self.assertIn("clipper2next::clipper2next", combined)
             test_recipe = (
@@ -212,7 +238,7 @@ class BuildInstallContractTests(unittest.TestCase):
         self.assertIn("--channel=release", internal)
         self.assertIn("--test-folder=" + str((ROOT / "packaging" / "test_package").resolve()), internal)
         self.assertNotIn("testing", " ".join(internal))
-        self.assertIn("--version=6.1.1", center)
+        self.assertIn("--version=7.0.1", center)
         self.assertFalse(any(value.startswith("--user") for value in center))
         self.assertFalse(any(value.startswith("--channel") for value in center))
         self.assertIn("--test-folder=" + str(Path("C:/stage/all/test_package").resolve()), center)
@@ -234,7 +260,7 @@ class BuildInstallContractTests(unittest.TestCase):
             [
                 "conan",
                 "upload",
-                "clipper2next/6.1.1@company/release",
+                "clipper2next/7.0.1@company/release",
                 "--remote=private-repository",
                 "--check",
                 "--force",
@@ -310,7 +336,7 @@ class BuildInstallContractTests(unittest.TestCase):
 
         self.assertEqual(
             "https://github.com/ansleliu/clipper2next/archive/refs/tags/"
-            "v6.1.1.tar.gz",
+            "v7.0.1.tar.gz",
             module.default_center_archive_url(identity),
         )
 
@@ -426,7 +452,7 @@ class BuildInstallContractTests(unittest.TestCase):
         self.assertNotIn("conan upload", internal.stdout)
         self.assertEqual(0, center.returncode, center.stdout + center.stderr)
         self.assertIn("Conan Center stage", center.stdout)
-        self.assertIn("--version=6.1.1", center.stdout)
+        self.assertIn("--version=7.0.1", center.stdout)
         self.assertNotIn("--user=", center.stdout)
         self.assertNotIn("--channel=", center.stdout)
 

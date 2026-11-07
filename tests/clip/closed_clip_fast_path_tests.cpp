@@ -1,6 +1,10 @@
+#include "support/path_equivalence.h"
+#include "clip/private/closed_clip_rectangle_operations.h"
+#include <algorithm>
 #include "clipper2next/clip.h"
 #include "clip/private/closed_clip_fast_path.h"
 #include "clip/private/clip_execution_strategy.h"
+#include "geometry/private/path_simplicity.h"
 
 #include <gtest/gtest.h>
 
@@ -245,18 +249,23 @@ TEST(Clipper2NextClosedClipFastPathTests, OverlappingContainedSubjectsBypassFast
     EXPECT_FALSE(next::internal::try_execute_closed_clip_fast_path(request, result));
 }
 
-TEST(Clipper2NextClosedClipFastPathTests, EdgeTouchingRectanglesUseClosedClipFastPath) {
-    const auto left = rectangle_path(0, 0, 100, 100);
-    const auto right = rectangle_path(100, 0, 200, 100);
-    const auto top = rectangle_path(0, 0, 100, 100);
-    const auto bottom = rectangle_path(0, 100, 100, 200);
-
-    for (const auto clip_type : {next::ClipType::Intersection,
-                                 next::ClipType::Union,
-                                 next::ClipType::Difference,
-                                 next::ClipType::Xor}) {
-        expect_rectangle_fast_path_matches_engine(clip_type, left, right);
-        expect_rectangle_fast_path_matches_engine(clip_type, top, bottom);
+TEST(Clipper2NextClosedClipFastPathTests, SharedEdgesUseTheEngineForPreservedBoundaryVertices) {
+    const auto subject = rectangle_path(0, 0, 100, 100);
+    for (const auto& clip : {rectangle_path(100, 0, 200, 100), rectangle_path(0, 100, 100, 200)}) {
+        expect_rectangle_fast_path_matches_engine(next::ClipType::Intersection, subject, clip);
+        for (const auto type : {next::ClipType::Union, next::ClipType::Difference, next::ClipType::Xor}) {
+            next::clip_request64 request;
+            request.clip_type = type;
+            request.fill_rule = next::FillRule::NonZero;
+            request.subjects = {subject};
+            request.clips = {clip};
+            next::paths64_result untouched{{{{-3,-2},{-1,-2},{-2,-1}}}, {}};
+            const auto original = untouched;
+            EXPECT_FALSE(next::internal::try_execute_closed_clip_fast_path(request, untouched));
+            EXPECT_EQ(untouched.closed, original.closed);
+            EXPECT_EQ(untouched.open, original.open);
+            EXPECT_EQ(next::clip(request).closed, next::internal::execute_clip_validated(request).closed);
+        }
     }
 }
 
@@ -474,4 +483,82 @@ TEST(Clipper2NextClosedClipFastPathTests, ReleaseThreadCachesKeepsSubsequentClip
     next::release_thread_caches();
     const auto after = next::internal::execute_clip_validated(request);
     EXPECT_EQ(before.closed, after.closed);
+}
+
+TEST(Clipper2NextClosedClipFastPathTests, SharedSimplicityRejectsCollinearRetracing) {
+    const next::Path64 retraced{{0,1},{1,0},{1,2},{1,1},{2,1}};
+    for (const bool reverse : {false,true}) {
+        auto path = retraced;
+        if (reverse) { std::reverse(path.begin(),path.end()); }
+        EXPECT_EQ(next::internal::path_simplicity::convex_simple_orientation(path), 0);
+        EXPECT_FALSE(next::internal::path_simplicity::path_is_provably_simple(path,64U));
+    }
+    for (const next::Path64 path : {
+             next::Path64{{0,0},{1,0},{2,0}},
+             next::Path64{{0,0},{1,0},{1,0}}}) {
+        EXPECT_FALSE(next::internal::path_simplicity::path_is_provably_simple(path,64U));
+    }
+    const next::Path64 monotone_collinear{{0,0},{1,0},{2,0},{2,2},{1,2},{0,2}};
+    EXPECT_EQ(next::internal::path_simplicity::convex_simple_orientation(monotone_collinear), 1);
+    auto reversed_collinear = monotone_collinear;
+    std::reverse(reversed_collinear.begin(), reversed_collinear.end());
+    EXPECT_EQ(next::internal::path_simplicity::convex_simple_orientation(reversed_collinear), -1);
+    EXPECT_TRUE(next::internal::path_simplicity::path_is_provably_simple(monotone_collinear,64U));
+}
+
+TEST(Clipper2NextClosedClipFastPathTests, RectangleUnionClassificationUsesExactBoundaryRelations) {
+    for (const int bits : {30,40,50}) {
+        const std::int64_t side = std::int64_t{1} << bits;
+        const next::Rect64 first{0,0,side,side};
+        const next::Rect64 diagonal{1,1,side+1,side+1};
+        next::internal::rectangle_path_layout layout;
+        EXPECT_FALSE(next::internal::try_layout_rectangular_union(first,diagonal,layout));
+        ASSERT_TRUE(next::internal::try_layout_two_rectangle_union(first,diagonal,layout));
+        EXPECT_EQ(layout.point_count(),8U);
+        EXPECT_FALSE(next::internal::try_layout_rectangular_union(diagonal,first,layout));
+        EXPECT_TRUE(next::internal::try_layout_rectangular_union(first,{1,1,side-1,side-1},layout));
+        EXPECT_FALSE(next::internal::try_layout_rectangular_union(first,{side,0,side+1,side},layout));
+        EXPECT_FALSE(next::internal::try_layout_rectangular_union(first,{0,side,side,side+1},layout));
+        EXPECT_FALSE(next::internal::try_layout_rectangular_union(first,{side+1,0,side+2,side},layout));
+        EXPECT_FALSE(next::internal::try_layout_rectangular_union(first,{side,side,side+1,side+1},layout));
+    }
+}
+
+TEST(Clipper2NextClosedClipFastPathTests, RectangleUnionKeepsTinyMissingCornersAtLargeCoordinates) {
+    for (const int bits : {25,30,40,50}) {
+        const std::int64_t side = std::int64_t{1} << bits;
+        for (const std::int64_t translation : {0LL,1000003LL,-1000003LL}) {
+            const auto base=translation;const auto end=base+side;
+            next::clip_request64 request;
+            request.clip_type=next::ClipType::Union;request.fill_rule=next::FillRule::NonZero;
+            request.subjects={rectangle_path(base,base,end,end)};
+            request.clips={rectangle_path(base+1,base+1,end+1,end+1)};
+            const next::Paths64 expected{{{end,base+1},{end+1,base+1},{end+1,end+1},{base+1,end+1},
+                {base+1,end},{base,end},{base,base},{end,base}}};
+            EXPECT_EQ(next::clip(request).closed,expected);
+            auto prepared=next::prepare_clip_request(request);
+            EXPECT_EQ(next::clip(prepared).closed,expected);
+        }
+    }
+}
+
+TEST(Clipper2NextClosedClipFastPathTests, RectangleUnionPreservesLegacyCollinearBoundaryVertices) {
+    for (const auto translation : {std::int64_t{}, std::int64_t{1} << 40, -(std::int64_t{1} << 40)}) {
+        const auto x = translation;
+        for (const auto fill : {next::FillRule::NonZero, next::FillRule::EvenOdd}) {
+            next::clip_request64 request;
+            request.clip_type = next::ClipType::Union;
+            request.fill_rule = fill;
+            request.subjects = {{{x+1,x+1},{x,x+1},{x,x},{x+1,x}}};
+            request.clips = {{{x,x},{x,x+1},{x+2,x+1},{x+2,x}}};
+            const next::Paths64 expected{{{x,x},{x+1,x},{x+2,x},{x+2,x+1},{x,x+1}}};
+            const auto prepared = next::prepare_clip_request(request);
+            for (const auto actual : {next::clip(request), next::clip(prepared)}) {
+                ASSERT_EQ(actual.closed.size(), 1U);
+                EXPECT_EQ(actual.closed.front().size(), 5U);
+                EXPECT_NO_THROW(next::tests::oracle::assert_paths_semantically_equal(expected, actual.closed));
+                EXPECT_TRUE(actual.open.empty());
+            }
+        }
+    }
 }

@@ -25,9 +25,7 @@ class PublicReleaseInformationTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            categories = {
-                finding.category for finding in check.find_findings(root)
-            }
+            categories = {finding.category for finding in check.find_findings(root)}
 
             self.assertEqual(
                 {
@@ -40,7 +38,7 @@ class PublicReleaseInformationTests(unittest.TestCase):
             )
 
     def test_public_repository_tree_contains_no_private_information(self) -> None:
-        self.assertEqual([], check.find_findings(ROOT))
+        self.assertEqual([], check.find_findings(ROOT, check.public_inputs(ROOT)))
 
 
 if __name__ == "__main__":
